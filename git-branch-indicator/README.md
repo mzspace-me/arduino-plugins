@@ -13,7 +13,22 @@ An Arduino IDE 2 extension that shows the git branch and commit of the open sket
 | `detached @ af3346a` | HEAD is on a commit, not a branch |
 | `no git` | git is not on the IDE's PATH, the sketch is not in a repository, or the repository has no commits. Hover for the reason |
 
-Hover for the repository root and the last commit subject. Click for a menu:
+Hover for the details:
+
+```
+Branch: dev
+Commit: af3346a Fix servo jitter
+Author: Mz, 2 hours ago
+Changes: 1 staged, 2 unstaged, 3 untracked
+Stashes: 1
+Repository: C:/Users/me/Arduino/robot
+```
+
+- **Author** and age are of the last commit, the age as git words it ("2 hours ago").
+- **Changes** counts files: staged (added to the index), unstaged (changed in the working tree, including files with merge conflicts) and untracked (not ignored by `.gitignore`). A file staged and then edited again counts in both staged and unstaged. A new folder holding only untracked files counts once, so an unignored build folder stays cheap to check. Untracked files show only here, never in the `*`.
+- **Stashes** is the number of entries in `git stash list`.
+
+Click for a menu:
 
 - **Show details**: the same details in a dialog.
 - **Copy branch @ commit**: copies the exact build source for notes and bench issues, for example `dev @ af3346a`, or `dev @ af3346a (dirty)` when tracked files have uncommitted changes. On a detached HEAD it copies `detached @ af3346a`; with `no git` it copies nothing and shows the reason.

@@ -67,7 +67,59 @@ test('modified tracked file marks the item; untracked file does not', async () =
   state = await readGitState(repo);
   assert.strictEqual(state.changedFiles, 1);
   assert.ok(formatState(state).text.endsWith(' *'));
-  assert.match(formatState(state).tooltip, /Uncommitted changes: 1 tracked file/);
+  assert.match(formatState(state).tooltip, /\nChanges: 0 staged, 1 unstaged, 1 untracked\n/);
+});
+
+test('tooltip counts staged, unstaged, untracked and stashes, and names the author and age', async () => {
+  const repo = makeRepo();
+  let state = await readGitState(repo);
+  assert.strictEqual(state.author, 'test');
+  assert.match(state.age, / ago$/);
+  assert.deepStrictEqual(
+    [state.staged, state.unstaged, state.untracked, state.stashes],
+    [0, 0, 0, 0],
+    'no stash yet reads as 0, not an error'
+  );
+
+  fs.appendFileSync(path.join(repo, 'sketch', 'sketch.ino'), 'void loop() {}\n');
+  git(repo, 'stash', '-q');
+  fs.appendFileSync(path.join(repo, 'sketch', 'sketch.ino'), 'int a;\n');
+  git(repo, 'stash', '-q');
+  // Staged then edited again: one file counted as both staged and unstaged.
+  fs.writeFileSync(path.join(repo, 'sketch', 'config.h'), '#define A 1\n');
+  git(repo, 'add', 'sketch/config.h');
+  fs.appendFileSync(path.join(repo, 'sketch', 'config.h'), '#define B 2\n');
+  fs.writeFileSync(path.join(repo, 'sketch', 'notes.txt'), 'scratch\n');
+  fs.mkdirSync(path.join(repo, 'build'));
+  fs.writeFileSync(path.join(repo, 'build', 'a.bin'), '');
+  fs.writeFileSync(path.join(repo, 'build', 'b.bin'), '');
+
+  state = await readGitState(repo);
+  assert.deepStrictEqual(
+    [state.changedFiles, state.staged, state.unstaged, state.untracked, state.stashes],
+    [1, 1, 1, 2, 2],
+    'a new folder counts as one untracked entry'
+  );
+  const lines = formatState(state).tooltip.split('\n');
+  assert.deepStrictEqual(lines.slice(2, 5), [
+    `Author: test, ${state.age}`,
+    'Changes: 1 staged, 1 unstaged, 2 untracked',
+    'Stashes: 2',
+  ]);
+});
+
+test('a merge conflict counts as unstaged', async () => {
+  const repo = makeRepo();
+  const ino = path.join(repo, 'sketch', 'sketch.ino');
+  git(repo, 'checkout', '-q', '-b', 'other');
+  fs.writeFileSync(ino, 'void setup() { other(); }\n');
+  git(repo, 'commit', '-q', '-am', 'other');
+  git(repo, 'checkout', '-q', 'feat/1-example');
+  fs.writeFileSync(ino, 'void setup() { mine(); }\n');
+  git(repo, 'commit', '-q', '-am', 'mine');
+  assert.throws(() => git(repo, 'merge', '-q', 'other'));
+  const state = await readGitState(repo);
+  assert.deepStrictEqual([state.changedFiles, state.staged, state.unstaged], [1, 0, 1]);
 });
 
 test('detached HEAD', async () => {
@@ -255,12 +307,18 @@ test('activate shows the item; clicking it opens the menu; Show details', async 
 
     await fake.click('Show details');
     assert.strictEqual(fake.messages.length, 1);
-    assert.match(fake.messages[0].text, /^Branch: feat\/1-example\nCommit: [0-9a-f]+ first commit\n/);
+    assert.match(
+      fake.messages[0].text,
+      /^Branch: feat\/1-example\nCommit: [0-9a-f]+ first commit\nAuthor: test, .+ ago\nChanges: 0 staged, 0 unstaged, 0 untracked\nStashes: 0\n/
+    );
     assert.ok(!fake.messages[0].text.includes('Click for'));
     assert.deepStrictEqual(fake.messages[0].options, { modal: true });
 
     await fake.registered.get('gitBranchIndicator.showDetails')();
-    assert.strictEqual(fake.messages[1].text, fake.messages[0].text);
+    // The commit age can tick over between the two dialogs ("0 seconds ago",
+    // "1 second ago"), so it is masked before comparing.
+    const withoutAge = (text) => text.replace(/^(Author: .+), .+ ago$/m, '$1');
+    assert.strictEqual(withoutAge(fake.messages[1].text), withoutAge(fake.messages[0].text));
   } finally {
     fake.dispose();
   }

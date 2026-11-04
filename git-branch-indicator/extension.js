@@ -31,7 +31,7 @@ function numberSetting(config, key, fallback, min, max) {
 function readSettings(config) {
   return {
     // Polling is what lets the item follow a branch switch made in a
-    // terminal; the IDE raises no event for it. Each poll is three short git
+    // terminal; the IDE raises no event for it. Each poll is four short git
     // calls, and a poll still running when the next is due is skipped.
     pollIntervalSeconds: numberSetting(config, 'pollIntervalSeconds', 5, 1, 300),
   };
@@ -74,15 +74,21 @@ function describeGitError(err) {
 async function readGitState(folder) {
   try {
     const root = await runGit(folder, ['rev-parse', '--show-toplevel']);
-    // Untracked files are left out on purpose: build output and scratch files
-    // would otherwise mark every checkout as modified.
+    // "normal" lists a new folder once instead of every file in it, so an
+    // unignored build folder cannot make each poll list thousands of files.
     const status = await runGit(folder, [
       'status',
       '--porcelain=v2',
       '--branch',
-      '--untracked-files=no',
+      '--untracked-files=normal',
     ]);
     const lines = status ? status.split(/\r?\n/) : [];
+    // Porcelain v2 entries: "1"/"2" changed or renamed, with XY = staged and
+    // unstaged state ("." for unchanged); "u" unmerged, which still needs
+    // resolving in the working tree, so it counts as unstaged; "?" untracked.
+    const entries = lines.filter((l) => !l.startsWith('#'));
+    const tracked = entries.filter((l) => !l.startsWith('? '));
+    const unmerged = (l) => l.startsWith('u ');
     const header = (key) => {
       const line = lines.find((l) => l.startsWith(`# ${key} `));
       return line ? line.slice(key.length + 3) : null;
@@ -91,15 +97,26 @@ async function readGitState(folder) {
       return { ok: false, folder, reason: 'The repository has no commits yet.' };
     }
     const branch = header('branch.head');
-    const last = await runGit(folder, ['log', '-1', '--format=%h %s']);
-    const space = last.indexOf(' ');
+    // NUL separators, since an author name or subject may hold any other
+    // character. --ignore-missing makes "no stash yet" a count of 0, not an error.
+    const [last, stashes] = await Promise.all([
+      runGit(folder, ['log', '-1', '--format=%h%x00%an%x00%ar%x00%s']),
+      runGit(folder, ['rev-list', '--walk-reflogs', '--count', '--ignore-missing', 'refs/stash']),
+    ]);
+    const [commit, author, age, subject] = last.split('\0');
     return {
       ok: true,
       root,
       branch: branch === '(detached)' ? null : branch,
-      commit: space < 0 ? last : last.slice(0, space),
-      subject: space < 0 ? '' : last.slice(space + 1),
-      changedFiles: lines.filter((l) => !l.startsWith('#')).length,
+      commit,
+      subject,
+      author,
+      age,
+      changedFiles: tracked.length,
+      staged: tracked.filter((l) => !unmerged(l) && l[2] !== '.').length,
+      unstaged: tracked.filter((l) => unmerged(l) || l[3] !== '.').length,
+      untracked: entries.length - tracked.length,
+      stashes: Number(stashes),
     };
   } catch (err) {
     return { ok: false, folder, reason: describeGitError(err) };
@@ -114,17 +131,17 @@ function formatState(state) {
     };
   }
   const branchLabel = state.branch || 'detached';
+  // Untracked files show only here, never in the "*": build output and
+  // scratch files would otherwise mark every checkout as modified.
   const dirtyMark = state.changedFiles > 0 ? ' *' : '';
-  const changesLine =
-    state.changedFiles > 0
-      ? `Uncommitted changes: ${state.changedFiles} tracked file(s)`
-      : 'No uncommitted changes to tracked files';
   return {
     text: `$(git-branch) ${branchLabel} @ ${state.commit}${dirtyMark}`,
     tooltip: [
       `Branch: ${state.branch || 'detached HEAD'}`,
       `Commit: ${state.commit} ${state.subject}`,
-      changesLine,
+      `Author: ${state.author}, ${state.age}`,
+      `Changes: ${state.staged} staged, ${state.unstaged} unstaged, ${state.untracked} untracked`,
+      `Stashes: ${state.stashes}`,
       `Repository: ${state.root}`,
       CLICK_HINT,
     ].join('\n'),
