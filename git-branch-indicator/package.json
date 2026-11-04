@@ -2,7 +2,7 @@
   "name": "arduino-git-branch-indicator",
   "displayName": "Git Branch Indicator",
   "description": "Shows the checked-out git branch and commit of the open sketch in the Arduino IDE 2 status bar.",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "publisher": "mzspace",
   "author": {
     "name": "Mz",
@@ -42,6 +42,22 @@
           "type": "boolean",
           "default": true,
           "description": "Show how many commits the branch is ahead of (↑) and behind (↓) its upstream, as of the last fetch. The indicator never fetches."
+        },
+        "gitBranchIndicator.warningColours": {
+          "type": "boolean",
+          "default": true,
+          "description": "Colour the item: the theme's error colour on a protected branch, otherwise its warning colour when tracked files have uncommitted changes."
+        },
+        "gitBranchIndicator.protectedBranches": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "main",
+            "master"
+          ],
+          "description": "Branch names (exact, case-sensitive) that get the error colour, as a reminder to commit on another branch."
         }
       }
     }

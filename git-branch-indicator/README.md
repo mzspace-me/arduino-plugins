@@ -14,6 +14,16 @@ An Arduino IDE 2 extension that shows the git branch and commit of the open sket
 | `detached @ af3346a` | HEAD is on a commit, not a branch |
 | `no git` | git is not on the IDE's PATH, the sketch is not in a repository, or the repository has no commits. Hover for the reason |
 
+The item's background also warns, in the colours of the IDE's theme:
+
+| Colour | When |
+|---|---|
+| Error (red in most themes) | On a protected branch, `main` or `master` unless changed in [Settings](#settings), with or without uncommitted changes |
+| Warning (yellow or orange in most themes) | On any other branch, or a detached HEAD, with uncommitted changes to tracked files |
+| None | Otherwise, or with `no git` |
+
+A protected branch takes the error colour even when clean: committing there by mistake is the costlier slip, and uncommitted changes on it still show as `*`. When the item is coloured, the first line of its tooltip says why. Both can be turned off or changed in [Settings](#settings).
+
 Hover for the details:
 
 ```
@@ -47,7 +57,9 @@ Press `Ctrl+Shift+P`, run **Preferences: Open Settings (UI)** and search for `Gi
 ```json
 {
   "gitBranchIndicator.pollIntervalSeconds": 5,
-  "gitBranchIndicator.showAheadBehind": true
+  "gitBranchIndicator.showAheadBehind": true,
+  "gitBranchIndicator.warningColours": true,
+  "gitBranchIndicator.protectedBranches": ["main", "master"]
 }
 ```
 
@@ -55,8 +67,10 @@ Press `Ctrl+Shift+P`, run **Preferences: Open Settings (UI)** and search for `Gi
 |---|---|---|
 | `gitBranchIndicator.pollIntervalSeconds` | `5` | Seconds between checks for a branch switch or commit made outside the IDE, from 1 to 300. Checks pause while the IDE is in the background |
 | `gitBranchIndicator.showAheadBehind` | `true` | Show the `↑`/`↓` counts against the upstream on the label. The tooltip shows them either way |
+| `gitBranchIndicator.warningColours` | `true` | Colour the item's background as described above; `false` leaves it uncoloured |
+| `gitBranchIndicator.protectedBranches` | `["main", "master"]` | Branch names that get the error colour, matched exactly and case-sensitively. `[]` protects none |
 
-Changes apply at once, without restarting the IDE. A value outside 1 to 300 is clamped to that range, and a value of the wrong type (such as `"10"` or `"false"` in quotes) is ignored in favour of the default.
+Changes apply at once, without restarting the IDE. A value outside 1 to 300 is clamped to that range, and a value of the wrong type (such as `"false"` in quotes, or a single branch name not in a list) is ignored in favour of the default. Entries of `protectedBranches` that are not strings are skipped.
 
 ## Install
 
@@ -84,7 +98,7 @@ Requires git on the PATH the IDE starts with. Tested with Arduino IDE 2.3.4.
 
 `extension.js` is the whole extension. Bump `version` in `package.json` with each change, then rebuild and reinstall with `-Install`, which also clears the IDE's unpacked copy of the previous build.
 
-`node git-branch-indicator\test_extension.js` checks the git reading, the status-bar text, activation, the click menu, settings and the extension id without the IDE (needs Node.js). `node git-branch-indicator\test_release.js` checks `release.ps1` against throwaway repositories and a stand-in `gh`, so it never touches GitHub.
+`node git-branch-indicator\test_extension.js` checks the git reading, the status-bar text and colours, activation, the click menu, settings and the extension id without the IDE (needs Node.js). `node git-branch-indicator\test_release.js` checks `release.ps1` against throwaway repositories and a stand-in `gh`, so it never touches GitHub.
 
 ## Release
 

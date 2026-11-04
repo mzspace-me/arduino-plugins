@@ -13,7 +13,7 @@ const Module = require('module');
 const os = require('os');
 const path = require('path');
 
-const { readGitState, formatState, readSettings, branchAtCommit, menuEntries } = require('./extension');
+const { readGitState, formatState, readSettings, warningColour, branchAtCommit, menuEntries } = require('./extension');
 
 function git(cwd, ...args) {
   execFileSync('git', ['-C', cwd, ...args], { stdio: 'pipe' });
@@ -260,6 +260,11 @@ async function activateFake(folder) {
   const noopEvent = () => ({ dispose() {} });
   const fakeVscode = {
     StatusBarAlignment: { Left: 1, Right: 2 },
+    ThemeColor: class ThemeColor {
+      constructor(id) {
+        this.id = id;
+      }
+    },
     window: {
       state: { focused: true },
       createStatusBarItem: () => item,
@@ -468,6 +473,83 @@ test('a settings change applies at once without restarting', async () => {
     assert.deepStrictEqual(fake.pollDelays, [5000, 30000]);
     // The 30 s poll cannot be what shows the new branch within the wait.
     await waitFor(() => fake.item.text.includes('feat/2-other'), 'an immediate refresh');
+  } finally {
+    fake.dispose();
+  }
+});
+
+test('colour settings fall back to defaults; non-string branches are dropped', () => {
+  const config = (values) => ({
+    get: (key, fallback) => (key in values ? values[key] : fallback),
+  });
+  const defaults = readSettings(config({}));
+  assert.strictEqual(defaults.warningColours, true);
+  assert.deepStrictEqual(defaults.protectedBranches, ['main', 'master']);
+  assert.strictEqual(readSettings(config({ warningColours: false })).warningColours, false);
+  assert.strictEqual(readSettings(config({ warningColours: 'false' })).warningColours, true);
+  assert.deepStrictEqual(readSettings(config({ protectedBranches: [] })).protectedBranches, []);
+  assert.deepStrictEqual(
+    readSettings(config({ protectedBranches: ['release', 7, null, 'main'] })).protectedBranches,
+    ['release', 'main']
+  );
+  assert.deepStrictEqual(
+    readSettings(config({ protectedBranches: 'release' })).protectedBranches,
+    ['main', 'master']
+  );
+});
+
+test('warning colour per state; protected branch wins over uncommitted changes', () => {
+  const on = { warningColours: true, protectedBranches: ['main', 'master'] };
+  const clean = { ok: true, branch: 'feat/x', commit: 'af3346a', changedFiles: 0 };
+  const colour = (state, settings = on) => {
+    const warning = warningColour(state, settings);
+    return warning && warning.themeColor;
+  };
+  assert.strictEqual(colour(clean), null);
+  assert.strictEqual(colour({ ...clean, changedFiles: 1 }), 'statusBarItem.warningBackground');
+  assert.strictEqual(colour({ ...clean, branch: 'main' }), 'statusBarItem.errorBackground');
+  assert.strictEqual(colour({ ...clean, branch: 'master', changedFiles: 3 }), 'statusBarItem.errorBackground');
+  assert.strictEqual(colour({ ...clean, branch: null }), null, 'detached HEAD is not a protected branch');
+  assert.strictEqual(colour({ ...clean, branch: null, changedFiles: 1 }), 'statusBarItem.warningBackground');
+  assert.strictEqual(colour({ ok: false, folder: '/x', reason: 'r' }), null);
+
+  // Exact names only: no prefix or case-insensitive match.
+  assert.strictEqual(colour({ ...clean, branch: 'Main' }), null);
+  assert.strictEqual(colour({ ...clean, branch: 'main-fix' }), null);
+  const custom = { warningColours: true, protectedBranches: ['release/1.0'] };
+  assert.strictEqual(colour({ ...clean, branch: 'release/1.0' }, custom), 'statusBarItem.errorBackground');
+  assert.strictEqual(colour({ ...clean, branch: 'main' }, custom), null);
+
+  const off = { ...on, warningColours: false };
+  assert.strictEqual(colour({ ...clean, branch: 'main', changedFiles: 1 }, off), null);
+
+  assert.strictEqual(
+    warningColour({ ...clean, branch: 'main' }, on).reason,
+    'Coloured: main is a protected branch (gitBranchIndicator.protectedBranches).'
+  );
+  assert.strictEqual(
+    warningColour({ ...clean, changedFiles: 1 }, on).reason,
+    'Coloured: tracked files have uncommitted changes.'
+  );
+});
+
+test('the item is coloured with the reason first in the tooltip; settings toggle it', async () => {
+  const repo = makeRepo();
+  git(repo, 'checkout', '-q', '-b', 'main');
+  const fake = await activateFake(repo);
+  const colour = () => fake.item.backgroundColor && fake.item.backgroundColor.id;
+  try {
+    assert.strictEqual(colour(), 'statusBarItem.errorBackground');
+    assert.match(fake.item.tooltip, /^Coloured: main is a protected branch .*\nBranch: main\n/);
+
+    fs.appendFileSync(path.join(repo, 'sketch', 'sketch.ino'), 'void loop() {}\n');
+    fake.changeSettings({ 'gitBranchIndicator.protectedBranches': ['master'] });
+    await waitFor(() => colour() === 'statusBarItem.warningBackground', 'the warning colour');
+    assert.match(fake.item.tooltip, /^Coloured: tracked files have uncommitted changes\.\nBranch: main\n/);
+
+    fake.changeSettings({ 'gitBranchIndicator.warningColours': false });
+    await waitFor(() => colour() === undefined, 'the colour to clear');
+    assert.match(fake.item.tooltip, /^Branch: main\n/);
   } finally {
     fake.dispose();
   }

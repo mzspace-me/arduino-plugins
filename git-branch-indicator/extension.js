@@ -30,6 +30,13 @@ function booleanSetting(config, key, fallback) {
   return typeof value === 'boolean' ? value : fallback;
 }
 
+// Non-string entries are dropped rather than the whole list, so one typo does
+// not unprotect every other branch.
+function stringArraySetting(config, key, fallback) {
+  const value = config.get(key, fallback);
+  return Array.isArray(value) ? value.filter((entry) => typeof entry === 'string') : fallback;
+}
+
 // Every setting is read here, one line each, so features read a plain object
 // and the defaults and limits sit in one place next to package.json's
 // contributes.configuration, which must declare the same ones.
@@ -40,6 +47,8 @@ function readSettings(config) {
     // calls, and a poll still running when the next is due is skipped.
     pollIntervalSeconds: numberSetting(config, 'pollIntervalSeconds', 5, 1, 300),
     showAheadBehind: booleanSetting(config, 'showAheadBehind', true),
+    warningColours: booleanSetting(config, 'warningColours', true),
+    protectedBranches: stringArraySetting(config, 'protectedBranches', ['main', 'master']),
   };
 }
 
@@ -191,6 +200,28 @@ function formatState(state, { showAheadBehind = true } = {}) {
   };
 }
 
+// The theme colour behind the item and the tooltip line saying why, or null to
+// leave it uncoloured. Error beats warning: committing to a protected branch is
+// the costlier mistake, and uncommitted changes there still show as `*`.
+function warningColour(state, settings) {
+  if (!settings.warningColours || !state.ok) {
+    return null;
+  }
+  if (state.branch && settings.protectedBranches.includes(state.branch)) {
+    return {
+      themeColor: 'statusBarItem.errorBackground',
+      reason: `Coloured: ${state.branch} is a protected branch (gitBranchIndicator.protectedBranches).`,
+    };
+  }
+  if (state.changedFiles > 0) {
+    return {
+      themeColor: 'statusBarItem.warningBackground',
+      reason: 'Coloured: tracked files have uncommitted changes.',
+    };
+  }
+  return null;
+}
+
 // Same branch and commit as the label, as a line to paste into notes and bench
 // issues. "(dirty)" rather than the label's "*" so it still reads as a warning
 // once pasted out of context.
@@ -288,8 +319,10 @@ function activate(context) {
       lastState = { ok: false, folder: '(unknown)', reason: `Indicator error: ${err.message}` };
     } finally {
       const view = formatState(lastState, settings);
+      const warning = warningColour(lastState, settings);
       item.text = view.text;
-      item.tooltip = view.tooltip;
+      item.tooltip = warning ? `${warning.reason}\n${view.tooltip}` : view.tooltip;
+      item.backgroundColor = warning ? new vscode.ThemeColor(warning.themeColor) : undefined;
       item.show();
       refreshing = false;
     }
@@ -346,4 +379,4 @@ function activate(context) {
   refresh();
 }
 
-module.exports = { activate, readGitState, formatState, readSettings, branchAtCommit, menuEntries };
+module.exports = { activate, readGitState, formatState, readSettings, warningColour, branchAtCommit, menuEntries };
