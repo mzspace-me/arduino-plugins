@@ -1,0 +1,24 @@
+{
+  "name": "arduino-git-branch-indicator",
+  "displayName": "Git Branch Indicator",
+  "description": "Shows the checked-out git branch and commit of the open sketch in the Arduino IDE 2 status bar.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "vscode": "^1.50.0"
+  },
+  "main": "./extension.js",
+  "activationEvents": [
+    "*"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "gitBranchIndicator.showDetails",
+        "title": "Git: Show Branch Details"
+      }
+    ]
+  }
+}
