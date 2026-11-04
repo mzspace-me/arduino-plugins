@@ -242,9 +242,23 @@ async function waitFor(condition, what) {
 // Activates the extension against a minimal stand-in for the IDE's `vscode`
 // module. `pickLabel` chooses the quick pick entry a click "selects"; every
 // message and clipboard write is recorded, as is each poll interval started.
-// `changeSettings` edits user settings and fires the change event.
+// `changeSettings` edits user settings and fires the change event;
+// `openEditor(fsPath, scheme)` makes that document the active editor (null for
+// none) and fires the active-editor change event.
 async function activateFake(folder) {
-  const item = { shown: false, show() { this.shown = true; }, dispose() {} };
+  // `texts` keeps every label shown, in order.
+  const item = {
+    shown: false,
+    texts: [],
+    get text() {
+      return this.texts[this.texts.length - 1];
+    },
+    set text(value) {
+      this.texts.push(value);
+    },
+    show() { this.shown = true; },
+    dispose() {},
+  };
   const fake = {
     item,
     registered: new Map(),
@@ -257,6 +271,7 @@ async function activateFake(folder) {
   };
   const settings = {};
   const configListeners = [];
+  const editorListeners = [];
   const noopEvent = () => ({ dispose() {} });
   const fakeVscode = {
     StatusBarAlignment: { Left: 1, Right: 2 },
@@ -277,6 +292,10 @@ async function activateFake(folder) {
       },
       onDidChangeWindowState: noopEvent,
       activeTextEditor: undefined,
+      onDidChangeActiveTextEditor: (listener) => {
+        editorListeners.push(listener);
+        return { dispose() {} };
+      },
     },
     workspace: {
       workspaceFolders: [{ uri: { fsPath: folder } }],
@@ -331,6 +350,11 @@ async function activateFake(folder) {
         Object.keys(changes).some((key) => key === section || key.startsWith(`${section}.`)),
     };
     configListeners.forEach((listener) => listener(event));
+  };
+  fake.openEditor = (fsPath, scheme = 'file') => {
+    const editor = fsPath === null ? undefined : { document: { uri: { scheme, fsPath } } };
+    fakeVscode.window.activeTextEditor = editor;
+    editorListeners.forEach((listener) => listener(editor));
   };
   await waitFor(() => item.shown, 'the status bar item');
   fake.click = (pickLabel) => {
@@ -443,6 +467,10 @@ test('settings fall back to defaults and are held to their limits', () => {
   assert.strictEqual(readSettings(config({ showAheadBehind: false })).showAheadBehind, false);
   assert.strictEqual(readSettings(config({ showAheadBehind: 'false' })).showAheadBehind, true);
   assert.strictEqual(readSettings(config({ showAheadBehind: 0 })).showAheadBehind, true);
+  assert.strictEqual(readSettings(config({})).followActiveFile, true);
+  assert.strictEqual(readSettings(config({ followActiveFile: false })).followActiveFile, false);
+  assert.strictEqual(readSettings(config({ followActiveFile: 'false' })).followActiveFile, true);
+  assert.strictEqual(readSettings(config({ followActiveFile: 0 })).followActiveFile, true);
 });
 
 test('showAheadBehind toggles the counts on the label at once', async () => {
@@ -550,6 +578,115 @@ test('the item is coloured with the reason first in the tooltip; settings toggle
     fake.changeSettings({ 'gitBranchIndicator.warningColours': false });
     await waitFor(() => colour() === undefined, 'the colour to clear');
     assert.match(fake.item.tooltip, /^Branch: main\n/);
+  } finally {
+    fake.dispose();
+  }
+});
+
+// A sketch repository and a library repository on a different branch, so the
+// label shows at a glance which one is read.
+function makeSketchAndLibrary() {
+  const sketchRepo = makeRepo();
+  const libraryRepo = makeRepo();
+  git(libraryRepo, 'checkout', '-q', '-b', 'lib/main');
+  return {
+    sketch: path.join(sketchRepo, 'sketch'),
+    sketchFile: path.join(sketchRepo, 'sketch', 'sketch.ino'),
+    sketchRepoFile: path.join(sketchRepo, 'README.md'),
+    libraryFile: path.join(libraryRepo, 'sketch', 'sketch.ino'),
+    libraryName: path.basename(libraryRepo),
+  };
+}
+
+test('follows the active file into another repository and back', async () => {
+  const { sketch, sketchFile, sketchRepoFile, libraryFile, libraryName } = makeSketchAndLibrary();
+  const fake = await activateFake(sketch);
+  try {
+    assert.match(fake.item.text, /^\$\(git-branch\) feat\/1-example @ /);
+    assert.ok(fake.item.tooltip.includes(`Following: ${sketch} (sketch)`));
+
+    fake.openEditor(libraryFile);
+    const libraryLabel = `$(git-branch) ${libraryName}: lib/main @ `;
+    await waitFor(() => fake.item.text.startsWith(libraryLabel), 'the library repository');
+    assert.ok(fake.item.tooltip.includes(`Following: ${path.dirname(libraryFile)} (active file)`));
+    await fake.click('Copy branch @ commit');
+    assert.match(fake.clipboard[0], new RegExp(`^${libraryName}: lib/main @ [0-9a-f]+$`));
+
+    fake.openEditor(sketchFile);
+    await waitFor(() => fake.item.text.includes(' feat/1-example @ '), 'the sketch repository');
+    assert.ok(!fake.item.text.includes(':'), 'no prefix for the sketch repository');
+
+    // Outside the sketch folder but in the sketch's repository: no prefix.
+    fake.openEditor(libraryFile);
+    await waitFor(() => fake.item.text.startsWith(libraryLabel), 'the library repository');
+    fake.openEditor(sketchRepoFile);
+    await waitFor(() => fake.item.text.includes(' feat/1-example @ '), 'the sketch repository');
+    assert.ok(!fake.item.text.includes(':'), 'no prefix within the sketch repository');
+    assert.ok(fake.item.tooltip.includes(`(active file)`));
+  } finally {
+    fake.dispose();
+  }
+});
+
+test('non-file editors, no editor and files in no repository show the sketch', async () => {
+  const { sketch, libraryFile } = makeSketchAndLibrary();
+  const outsideFile = path.join(tempDir('git-indicator-no-repo-'), 'core.h');
+  const fake = await activateFake(sketch);
+  const showsLibrary = () => fake.item.text.includes(' lib/main @ ');
+  const showsSketch = () => fake.item.text.includes(' feat/1-example @ ');
+  try {
+    for (const [fsPath, scheme] of [
+      ['/user/settings.json', 'user-storage'],
+      ['Untitled-1', 'untitled'],
+      [null],
+      [outsideFile, 'file'],
+    ]) {
+      fake.openEditor(libraryFile);
+      await waitFor(showsLibrary, 'the library repository');
+      fake.openEditor(fsPath, scheme);
+      await waitFor(showsSketch, `the sketch for ${scheme || 'no'} editor`);
+    }
+    assert.ok(
+      fake.item.tooltip.includes(`Following: ${sketch} (sketch; the active file is in no git repository)`)
+    );
+  } finally {
+    fake.dispose();
+  }
+});
+
+test('followActiveFile off keeps the sketch; on again follows at once', async () => {
+  const { sketch, libraryFile } = makeSketchAndLibrary();
+  const fake = await activateFake(sketch);
+  const showsLibrary = () => fake.item.text.includes(' lib/main @ ');
+  try {
+    fake.openEditor(libraryFile);
+    await waitFor(showsLibrary, 'the library repository');
+
+    fake.changeSettings({ 'gitBranchIndicator.followActiveFile': false });
+    await waitFor(() => !showsLibrary(), 'the sketch once following is off');
+    assert.match(fake.item.text, /^\$\(git-branch\) feat\/1-example @ /);
+
+    fake.changeSettings({ 'gitBranchIndicator.followActiveFile': true });
+    await waitFor(showsLibrary, 'the library repository once following is on');
+  } finally {
+    fake.dispose();
+  }
+});
+
+test('an editor switch while a refresh runs is shown when it ends', async () => {
+  const { sketch, sketchFile, libraryFile } = makeSketchAndLibrary();
+  const fake = await activateFake(sketch);
+  try {
+    // Polling cannot then be what shows the second switch within the wait.
+    fake.changeSettings({ 'gitBranchIndicator.pollIntervalSeconds': 300 });
+    const sketchLabel = fake.item.text;
+    await waitFor(() => fake.item.texts.length === 2, 'the refresh after the settings change');
+
+    fake.openEditor(libraryFile);
+    fake.openEditor(sketchFile);
+    await waitFor(() => fake.item.texts.length === 4, 'a refresh per switch');
+    assert.match(fake.item.texts[2], / lib\/main @ /);
+    assert.strictEqual(fake.item.texts[3], sketchLabel);
   } finally {
     fake.dispose();
   }

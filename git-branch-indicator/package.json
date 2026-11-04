@@ -2,7 +2,7 @@
   "name": "arduino-git-branch-indicator",
   "displayName": "Git Branch Indicator",
   "description": "Shows the checked-out git branch and commit of the open sketch in the Arduino IDE 2 status bar.",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "publisher": "mzspace",
   "author": {
     "name": "Mz",
@@ -58,6 +58,11 @@
             "master"
           ],
           "description": "Branch names (exact, case-sensitive) that get the error colour, as a reminder to commit on another branch."
+        },
+        "gitBranchIndicator.followActiveFile": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the repository of the file in the active editor, such as a library opened from the sketch, when it lies outside the sketch folder. The label is prefixed with that repository's folder name when it is not the sketch's. Files in no repository, and settings or other non-file editors, show the sketch's repository."
         }
       }
     }

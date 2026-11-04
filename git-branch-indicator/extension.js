@@ -49,6 +49,7 @@ function readSettings(config) {
     showAheadBehind: booleanSetting(config, 'showAheadBehind', true),
     warningColours: booleanSetting(config, 'warningColours', true),
     protectedBranches: stringArraySetting(config, 'protectedBranches', ['main', 'master']),
+    followActiveFile: booleanSetting(config, 'followActiveFile', true),
   };
 }
 
@@ -144,6 +145,16 @@ async function readGitState(folder) {
   }
 }
 
+// Names the repository in the label and the copied text when it is not the
+// sketch's, so a library's branch is never mistaken for the sketch's.
+function repositoryPrefix(state) {
+  return state.repositoryName ? `${state.repositoryName}: ` : '';
+}
+
+function followingLines(state) {
+  return state.following ? [`Following: ${state.following}`] : [];
+}
+
 // Only the non-zero sides, so a branch in step with its upstream (or without
 // one) keeps the plain label.
 function aheadBehindMark(state) {
@@ -177,7 +188,9 @@ function formatState(state, { showAheadBehind = true } = {}) {
   if (!state.ok) {
     return {
       text: '$(git-branch) no git',
-      tooltip: `${state.reason}\nFolder: ${state.folder}\n${CLICK_HINT}`,
+      tooltip: [state.reason, `Folder: ${state.folder}`, ...followingLines(state), CLICK_HINT].join(
+        '\n'
+      ),
     };
   }
   const branchLabel = state.branch || 'detached';
@@ -186,7 +199,7 @@ function formatState(state, { showAheadBehind = true } = {}) {
   const dirtyMark = state.changedFiles > 0 ? ' *' : '';
   const aheadBehind = showAheadBehind ? aheadBehindMark(state) : '';
   return {
-    text: `$(git-branch) ${branchLabel} @ ${state.commit}${aheadBehind}${dirtyMark}`,
+    text: `$(git-branch) ${repositoryPrefix(state)}${branchLabel} @ ${state.commit}${aheadBehind}${dirtyMark}`,
     tooltip: [
       `Branch: ${state.branch || 'detached HEAD'}`,
       `Commit: ${state.commit} ${state.subject}`,
@@ -195,6 +208,7 @@ function formatState(state, { showAheadBehind = true } = {}) {
       `Stashes: ${state.stashes}`,
       upstreamLine(state),
       `Repository: ${state.root}`,
+      ...followingLines(state),
       CLICK_HINT,
     ].join('\n'),
   };
@@ -226,7 +240,7 @@ function warningColour(state, settings) {
 // issues. "(dirty)" rather than the label's "*" so it still reads as a warning
 // once pasted out of context.
 function branchAtCommit(state) {
-  const text = `${state.branch || 'detached'} @ ${state.commit}`;
+  const text = `${repositoryPrefix(state)}${state.branch || 'detached'} @ ${state.commit}`;
   return state.changedFiles > 0 ? `${text} (dirty)` : text;
 }
 
@@ -266,16 +280,64 @@ function menuEntries(state) {
   ];
 }
 
-function sketchFolder(vscode) {
-  const folders = vscode.workspace.workspaceFolders;
-  if (folders && folders.length > 0) {
-    return folders[0].uri.fsPath;
-  }
+// Only files on disk have a folder git can read; settings, untitled and other
+// virtual documents use other URI schemes.
+function activeFileFolder(vscode) {
   const editor = vscode.window.activeTextEditor;
   if (editor && editor.document.uri.scheme === 'file') {
     return path.dirname(editor.document.uri.fsPath);
   }
   return null;
+}
+
+function sketchFolder(vscode) {
+  const folders = vscode.workspace.workspaceFolders;
+  if (folders && folders.length > 0) {
+    return folders[0].uri.fsPath;
+  }
+  return activeFileFolder(vscode);
+}
+
+function isInside(folder, parent) {
+  const relative = path.relative(parent, folder);
+  return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+// Null when the folder is in no repository; the reason is not needed, since
+// the caller then falls back to the sketch, whose own error is shown.
+async function repositoryRoot(folder) {
+  try {
+    return await runGit(folder, ['rev-parse', '--show-toplevel']);
+  } catch {
+    return null;
+  }
+}
+
+// Reads the repository of the active file (a library opened from the sketch,
+// say) when it lies outside the sketch folder, and the sketch's otherwise.
+// A file in no repository falls back to the sketch rather than showing
+// "no git" for, e.g., a board core's header opened by Go to Definition.
+async function readFollowedState(vscode, followActiveFile) {
+  const sketch = sketchFolder(vscode);
+  if (!sketch) {
+    return { ok: false, folder: '(none)', reason: 'No sketch folder is open.' };
+  }
+  const file = followActiveFile ? activeFileFolder(vscode) : null;
+  if (!file || isInside(file, sketch)) {
+    return { ...(await readGitState(sketch)), following: `${sketch} (sketch)` };
+  }
+  const [fileRoot, sketchRoot] = await Promise.all([repositoryRoot(file), repositoryRoot(sketch)]);
+  if (!fileRoot) {
+    return {
+      ...(await readGitState(sketch)),
+      following: `${sketch} (sketch; the active file is in no git repository)`,
+    };
+  }
+  return {
+    ...(await readGitState(file)),
+    following: `${file} (active file)`,
+    repositoryName: fileRoot === sketchRoot ? null : path.basename(fileRoot),
+  };
 }
 
 function activate(context) {
@@ -292,6 +354,7 @@ function activate(context) {
 
   let lastState = null;
   let refreshing = false;
+  let refreshAgain = false;
   let settings = readSettings(vscode.workspace.getConfiguration(SETTINGS_SECTION));
   let timer = null;
 
@@ -299,22 +362,22 @@ function activate(context) {
   function startPolling() {
     clearInterval(timer);
     timer = setInterval(() => {
-      if (vscode.window.state.focused) {
+      if (vscode.window.state.focused && !refreshing) {
         refresh();
       }
     }, settings.pollIntervalSeconds * 1000);
   }
 
   async function refresh() {
+    // An event during a refresh (an editor switch, a save) is run after it,
+    // so it is not lost until the next poll. Polls skip instead of queueing.
     if (refreshing) {
+      refreshAgain = true;
       return;
     }
     refreshing = true;
     try {
-      const folder = sketchFolder(vscode);
-      lastState = folder
-        ? await readGitState(folder)
-        : { ok: false, folder: '(none)', reason: 'No sketch folder is open.' };
+      lastState = await readFollowedState(vscode, settings.followActiveFile);
     } catch (err) {
       lastState = { ok: false, folder: '(unknown)', reason: `Indicator error: ${err.message}` };
     } finally {
@@ -325,6 +388,10 @@ function activate(context) {
       item.backgroundColor = warning ? new vscode.ThemeColor(warning.themeColor) : undefined;
       item.show();
       refreshing = false;
+      if (refreshAgain) {
+        refreshAgain = false;
+        refresh();
+      }
     }
   }
 
@@ -356,6 +423,13 @@ function activate(context) {
     }),
     vscode.workspace.onDidSaveTextDocument(refresh),
     vscode.workspace.onDidChangeWorkspaceFolders(refresh),
+    // Theia reports the most recently active visible editor here, so focusing
+    // the Serial Monitor, Output or a sidebar view does not change it.
+    vscode.window.onDidChangeActiveTextEditor(() => {
+      if (settings.followActiveFile) {
+        refresh();
+      }
+    }),
     vscode.window.onDidChangeWindowState((windowState) => {
       if (windowState.focused) {
         refresh();

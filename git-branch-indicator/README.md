@@ -12,6 +12,7 @@ An Arduino IDE 2 extension that shows the git branch and commit of the open sket
 | `↑2 ↓1` after the commit | The branch has 2 commits its upstream lacks and lacks 1 commit the upstream has. Only non-zero sides are shown; nothing is shown in step with the upstream or without one |
 | `*` at the end | One or more tracked files have uncommitted changes (untracked files are ignored) |
 | `detached @ af3346a` | HEAD is on a commit, not a branch |
+| `MyLib: main @ 1b2c3d4` | The active editor's file is in another repository, folder `MyLib` (see [Follow the active file](#follow-the-active-file)) |
 | `no git` | git is not on the IDE's PATH, the sketch is not in a repository, or the repository has no commits. Hover for the reason |
 
 The item's background also warns, in the colours of the IDE's theme:
@@ -46,7 +47,13 @@ Click for a menu:
 - **Show details**: the same details in a dialog.
 - **Copy branch @ commit**: copies the exact build source for notes and bench issues, for example `dev @ af3346a`, or `dev @ af3346a (dirty)` when tracked files have uncommitted changes. On a detached HEAD it copies `detached @ af3346a`; with `no git` it copies nothing and shows the reason.
 
-The item refreshes every 5 s (see [Settings](#settings)) while the IDE has focus, on save, and when the IDE window regains focus, so a branch switch made in a terminal appears within a few seconds.
+The item refreshes every 5 s (see [Settings](#settings)) while the IDE has focus, on save, when the IDE window regains focus, and when another editor tab becomes active, so a branch switch made in a terminal appears within a few seconds.
+
+### Follow the active file
+
+When the file in the active editor tab lies outside the sketch folder, such as a library opened with **Go to Definition**, the item shows that file's repository instead of the sketch's. The label is prefixed with the repository's folder name when it is not the sketch's repository, and **Copy branch @ commit** copies the prefix too, for example `MyLib: main @ 1b2c3d4`. The tooltip's `Following:` line names the folder being read and whether it is the active file's or the sketch's.
+
+It shows the sketch's repository again when the active file is in the sketch folder, in no git repository (a board core's header, say), or not a file on disk (such as `settings.json` opened from the settings editor). Focusing the Serial Monitor, Output or a sidebar view keeps the last editor tab followed. Turn it off with `gitBranchIndicator.followActiveFile`.
 
 The background check runs git with `--no-optional-locks`, so it never takes `.git/index.lock` and cannot get in the way of a commit or checkout made elsewhere.
 
@@ -59,7 +66,8 @@ Press `Ctrl+Shift+P`, run **Preferences: Open Settings (UI)** and search for `Gi
   "gitBranchIndicator.pollIntervalSeconds": 5,
   "gitBranchIndicator.showAheadBehind": true,
   "gitBranchIndicator.warningColours": true,
-  "gitBranchIndicator.protectedBranches": ["main", "master"]
+  "gitBranchIndicator.protectedBranches": ["main", "master"],
+  "gitBranchIndicator.followActiveFile": true
 }
 ```
 
@@ -69,6 +77,7 @@ Press `Ctrl+Shift+P`, run **Preferences: Open Settings (UI)** and search for `Gi
 | `gitBranchIndicator.showAheadBehind` | `true` | Show the `↑`/`↓` counts against the upstream on the label. The tooltip shows them either way |
 | `gitBranchIndicator.warningColours` | `true` | Colour the item's background as described above; `false` leaves it uncoloured |
 | `gitBranchIndicator.protectedBranches` | `["main", "master"]` | Branch names that get the error colour, matched exactly and case-sensitively. `[]` protects none |
+| `gitBranchIndicator.followActiveFile` | `true` | Show the repository of the active editor's file when it lies outside the sketch folder (see [Follow the active file](#follow-the-active-file)). `false` always shows the sketch's |
 
 Changes apply at once, without restarting the IDE. A value outside 1 to 300 is clamped to that range, and a value of the wrong type (such as `"false"` in quotes, or a single branch name not in a list) is ignored in favour of the default. Entries of `protectedBranches` that are not strings are skipped.
 
