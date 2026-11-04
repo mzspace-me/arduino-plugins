@@ -13,7 +13,7 @@ const Module = require('module');
 const os = require('os');
 const path = require('path');
 
-const { readGitState, formatState } = require('./extension');
+const { readGitState, formatState, readSettings } = require('./extension');
 
 function git(cwd, ...args) {
   execFileSync('git', ['-C', cwd, ...args], { stdio: 'pipe' });
@@ -114,11 +114,16 @@ test('extension id and author credit', () => {
   assert.deepStrictEqual(pkg.author, { name: 'Mz', url: 'https://mzspace.me' });
 });
 
-test('activate shows the item; clicking it shows the details', async () => {
-  const repo = makeRepo();
+// A minimal stand-in for the IDE's `vscode` module, loaded in place of the
+// real one while `fn` runs. Records poll interval delays and lets a test fire
+// a settings change.
+async function withFakeIde(repo, fn) {
   const item = { shown: false, show() { this.shown = true; }, dispose() {} };
   const registered = new Map();
   const messages = [];
+  const settings = {};
+  const configListeners = [];
+  const pollDelays = [];
   const noopEvent = () => ({ dispose() {} });
   const fakeVscode = {
     StatusBarAlignment: { Left: 1, Right: 2 },
@@ -133,6 +138,16 @@ test('activate shows the item; clicking it shows the details', async () => {
       workspaceFolders: [{ uri: { fsPath: path.join(repo, 'sketch') } }],
       onDidSaveTextDocument: noopEvent,
       onDidChangeWorkspaceFolders: noopEvent,
+      getConfiguration: (section) => ({
+        get: (key, fallback) => {
+          const value = settings[`${section}.${key}`];
+          return value === undefined ? fallback : value;
+        },
+      }),
+      onDidChangeConfiguration: (listener) => {
+        configListeners.push(listener);
+        return { dispose() {} };
+      },
     },
     commands: {
       registerCommand: (id, handler) => {
@@ -141,30 +156,81 @@ test('activate shows the item; clicking it shows the details', async () => {
       },
     },
   };
+  const changeSettings = (changes) => {
+    Object.assign(settings, changes);
+    const event = {
+      affectsConfiguration: (section) =>
+        Object.keys(changes).some((key) => key === section || key.startsWith(`${section}.`)),
+    };
+    configListeners.forEach((listener) => listener(event));
+  };
+  const waitFor = async (condition, what) => {
+    for (let i = 0; i < 50 && !condition(); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.ok(condition(), `timed out waiting for ${what}`);
+  };
 
   const originalLoad = Module._load;
+  const originalSetInterval = global.setInterval;
   Module._load = function load(request, ...rest) {
     return request === 'vscode' ? fakeVscode : originalLoad.call(this, request, ...rest);
+  };
+  global.setInterval = (callback, delay) => {
+    pollDelays.push(delay);
+    return originalSetInterval(callback, delay);
   };
   const context = { subscriptions: [] };
   try {
     require('./extension').activate(context);
-    for (let i = 0; i < 50 && !item.shown; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    assert.ok(item.shown, 'status bar item was never shown');
+    await waitFor(() => item.shown, 'the status bar item');
+    await fn({ item, registered, messages, pollDelays, changeSettings, waitFor });
+  } finally {
+    Module._load = originalLoad;
+    global.setInterval = originalSetInterval;
+    context.subscriptions.forEach((s) => s.dispose());
+  }
+}
+
+test('activate shows the item; clicking it shows the details', async () => {
+  const repo = makeRepo();
+  await withFakeIde(repo, async ({ item, registered, messages, pollDelays }) => {
     assert.match(item.text, /^\$\(git-branch\) feat\/1-example @ [0-9a-f]+$/);
     assert.strictEqual(item.command, 'gitBranchIndicator.showDetails');
     assert.deepStrictEqual([...registered.keys()], ['gitBranchIndicator.showDetails']);
+    assert.deepStrictEqual(pollDelays, [5000]);
 
     await registered.get('gitBranchIndicator.showDetails')();
     assert.strictEqual(messages.length, 1);
     assert.match(messages[0], /^Branch: feat\/1-example\nCommit: [0-9a-f]+ first commit\n/);
     assert.ok(!messages[0].includes('Click for details'));
-  } finally {
-    Module._load = originalLoad;
-    context.subscriptions.forEach((s) => s.dispose());
-  }
+  });
+});
+
+test('settings fall back to defaults and are held to their limits', () => {
+  const config = (values) => ({
+    get: (key, fallback) => (key in values ? values[key] : fallback),
+  });
+  assert.strictEqual(readSettings(config({})).pollIntervalSeconds, 5);
+  assert.strictEqual(readSettings(config({ pollIntervalSeconds: 30 })).pollIntervalSeconds, 30);
+  assert.strictEqual(readSettings(config({ pollIntervalSeconds: 0 })).pollIntervalSeconds, 1);
+  assert.strictEqual(readSettings(config({ pollIntervalSeconds: 9999 })).pollIntervalSeconds, 300);
+  assert.strictEqual(readSettings(config({ pollIntervalSeconds: '10' })).pollIntervalSeconds, 5);
+  assert.strictEqual(readSettings(config({ pollIntervalSeconds: null })).pollIntervalSeconds, 5);
+});
+
+test('a settings change applies at once without restarting', async () => {
+  const repo = makeRepo();
+  await withFakeIde(repo, async ({ item, pollDelays, changeSettings, waitFor }) => {
+    changeSettings({ 'editor.fontSize': 20 });
+    assert.deepStrictEqual(pollDelays, [5000], 'another extension\'s setting restarted polling');
+
+    git(repo, 'checkout', '-q', '-b', 'feat/2-other');
+    changeSettings({ 'gitBranchIndicator.pollIntervalSeconds': 30 });
+    assert.deepStrictEqual(pollDelays, [5000, 30000]);
+    // The 30 s poll cannot be what shows the new branch within the wait.
+    await waitFor(() => item.text.includes('feat/2-other'), 'an immediate refresh');
+  });
 });
 
 (async () => {

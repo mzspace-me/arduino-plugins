@@ -13,9 +13,25 @@ An Arduino IDE 2 extension that shows the git branch and commit of the open sket
 | `detached @ af3346a` | HEAD is on a commit, not a branch |
 | `no git` | git is not on the IDE's PATH, the sketch is not in a repository, or the repository has no commits. Hover for the reason |
 
-Hover for the repository root and the last commit subject. Click for the same details in a dialog. The item refreshes every 5 s while the IDE has focus, on save, and when the IDE window regains focus, so a branch switch made in a terminal appears within a few seconds.
+Hover for the repository root and the last commit subject. Click for the same details in a dialog. The item refreshes every 5 s (see [Settings](#settings)) while the IDE has focus, on save, and when the IDE window regains focus, so a branch switch made in a terminal appears within a few seconds.
 
 The background check runs git with `--no-optional-locks`, so it never takes `.git/index.lock` and cannot get in the way of a commit or checkout made elsewhere.
+
+## Settings
+
+Press `Ctrl+Shift+P`, run **Preferences: Open Settings (UI)** and search for `Git Branch Indicator` (Arduino's own **File > Preferences** dialog does not list extension settings), or add the keys to `%USERPROFILE%\.arduinoIDE\settings.json`:
+
+```json
+{
+  "gitBranchIndicator.pollIntervalSeconds": 5
+}
+```
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `gitBranchIndicator.pollIntervalSeconds` | `5` | Seconds between checks for a branch switch or commit made outside the IDE, from 1 to 300. Checks pause while the IDE is in the background |
+
+Changes apply at once, without restarting the IDE. A value outside 1 to 300 is clamped to that range, and a value that is not a number is ignored in favour of the default.
 
 ## Install
 

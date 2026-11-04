@@ -7,13 +7,33 @@
 const { execFile } = require('child_process');
 const path = require('path');
 
-// Polling is what lets the item follow a branch switch made in a terminal;
-// the IDE raises no event for it. Each poll is three short git calls, and a
-// poll still running when the next is due is skipped rather than queued.
-const POLL_INTERVAL_MS = 5000;
 const GIT_TIMEOUT_MS = 4000;
 const STATUS_BAR_PRIORITY = 100;
 const COMMAND_ID = 'gitBranchIndicator.showDetails';
+const SETTINGS_SECTION = 'gitBranchIndicator';
+
+// A value typed into settings.json is not held to the schema in package.json;
+// the editor only underlines it. Out-of-range numbers are clamped and other
+// types fall back to the default, so a typo cannot stop polling altogether.
+function numberSetting(config, key, fallback, min, max) {
+  const value = config.get(key, fallback);
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, value));
+}
+
+// Every setting is read here, one line each, so features read a plain object
+// and the defaults and limits sit in one place next to package.json's
+// contributes.configuration, which must declare the same ones.
+function readSettings(config) {
+  return {
+    // Polling is what lets the item follow a branch switch made in a
+    // terminal; the IDE raises no event for it. Each poll is three short git
+    // calls, and a poll still running when the next is due is skipped.
+    pollIntervalSeconds: numberSetting(config, 'pollIntervalSeconds', 5, 1, 300),
+  };
+}
 
 function runGit(cwd, args) {
   return new Promise((resolve, reject) => {
@@ -135,6 +155,18 @@ function activate(context) {
 
   let lastState = null;
   let refreshing = false;
+  let settings = readSettings(vscode.workspace.getConfiguration(SETTINGS_SECTION));
+  let timer = null;
+
+  // No polling while the IDE is in the background; regaining focus refreshes.
+  function startPolling() {
+    clearInterval(timer);
+    timer = setInterval(() => {
+      if (vscode.window.state.focused) {
+        refresh();
+      }
+    }, settings.pollIntervalSeconds * 1000);
+  }
 
   async function refresh() {
     if (refreshing) {
@@ -175,18 +207,23 @@ function activate(context) {
       if (windowState.focused) {
         refresh();
       }
-    })
+    }),
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (!event.affectsConfiguration(SETTINGS_SECTION)) {
+        return;
+      }
+      const previous = settings;
+      settings = readSettings(vscode.workspace.getConfiguration(SETTINGS_SECTION));
+      if (settings.pollIntervalSeconds !== previous.pollIntervalSeconds) {
+        startPolling();
+      }
+      refresh();
+    }),
+    { dispose: () => clearInterval(timer) }
   );
 
-  // No polling while the IDE is in the background; regaining focus refreshes.
-  const timer = setInterval(() => {
-    if (vscode.window.state.focused) {
-      refresh();
-    }
-  }, POLL_INTERVAL_MS);
-  context.subscriptions.push({ dispose: () => clearInterval(timer) });
-
+  startPolling();
   refresh();
 }
 
-module.exports = { activate, readGitState, formatState };
+module.exports = { activate, readGitState, formatState, readSettings };
