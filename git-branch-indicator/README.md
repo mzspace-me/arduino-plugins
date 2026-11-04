@@ -13,7 +13,12 @@ An Arduino IDE 2 extension that shows the git branch and commit of the open sket
 | `detached @ af3346a` | HEAD is on a commit, not a branch |
 | `no git` | git is not on the IDE's PATH, the sketch is not in a repository, or the repository has no commits. Hover for the reason |
 
-Hover for the repository root and the last commit subject. Click for the same details in a dialog. The item refreshes every 5 s (see [Settings](#settings)) while the IDE has focus, on save, and when the IDE window regains focus, so a branch switch made in a terminal appears within a few seconds.
+Hover for the repository root and the last commit subject. Click for a menu:
+
+- **Show details**: the same details in a dialog.
+- **Copy branch @ commit**: copies the exact build source for notes and bench issues, for example `dev @ af3346a`, or `dev @ af3346a (dirty)` when tracked files have uncommitted changes. On a detached HEAD it copies `detached @ af3346a`; with `no git` it copies nothing and shows the reason.
+
+The item refreshes every 5 s (see [Settings](#settings)) while the IDE has focus, on save, and when the IDE window regains focus, so a branch switch made in a terminal appears within a few seconds.
 
 The background check runs git with `--no-optional-locks`, so it never takes `.git/index.lock` and cannot get in the way of a commit or checkout made elsewhere.
 
@@ -51,7 +56,7 @@ Requires git on the PATH the IDE starts with. Tested with Arduino IDE 2.3.4.
 
 `extension.js` is the whole extension. Bump `version` in `package.json` with each change, then rebuild and reinstall with `-Install`, which also clears the IDE's unpacked copy of the previous build.
 
-`node git-branch-indicator\test_extension.js` checks the git reading, the status-bar text, activation and the extension id without the IDE (needs Node.js).
+`node git-branch-indicator\test_extension.js` checks the git reading, the status-bar text, activation, the click menu, settings and the extension id without the IDE (needs Node.js).
 
 ## Author
 

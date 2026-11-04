@@ -9,7 +9,9 @@ const path = require('path');
 
 const GIT_TIMEOUT_MS = 4000;
 const STATUS_BAR_PRIORITY = 100;
-const COMMAND_ID = 'gitBranchIndicator.showDetails';
+const MENU_COMMAND_ID = 'gitBranchIndicator.openMenu';
+const DETAILS_COMMAND_ID = 'gitBranchIndicator.showDetails';
+const CLICK_HINT = 'Click for details and copy.';
 const SETTINGS_SECTION = 'gitBranchIndicator';
 
 // A value typed into settings.json is not held to the schema in package.json;
@@ -108,7 +110,7 @@ function formatState(state) {
   if (!state.ok) {
     return {
       text: '$(git-branch) no git',
-      tooltip: `${state.reason}\nFolder: ${state.folder}\nClick for details.`,
+      tooltip: `${state.reason}\nFolder: ${state.folder}\n${CLICK_HINT}`,
     };
   }
   const branchLabel = state.branch || 'detached';
@@ -124,9 +126,53 @@ function formatState(state) {
       `Commit: ${state.commit} ${state.subject}`,
       changesLine,
       `Repository: ${state.root}`,
-      'Click for details.',
+      CLICK_HINT,
     ].join('\n'),
   };
+}
+
+// Same branch and commit as the label, as a line to paste into notes and bench
+// issues. "(dirty)" rather than the label's "*" so it still reads as a warning
+// once pasted out of context.
+function branchAtCommit(state) {
+  const text = `${state.branch || 'detached'} @ ${state.commit}`;
+  return state.changedFiles > 0 ? `${text} (dirty)` : text;
+}
+
+function showDetails(vscode, state) {
+  const view = formatState(state);
+  vscode.window.showInformationMessage(view.tooltip.slice(0, -`\n${CLICK_HINT}`.length), {
+    modal: true,
+  });
+}
+
+async function copyBranchAtCommit(vscode, state) {
+  if (!state.ok) {
+    vscode.window.showWarningMessage(`Nothing to copy: ${state.reason}`);
+    return;
+  }
+  const text = branchAtCommit(state);
+  try {
+    await vscode.env.clipboard.writeText(text);
+  } catch (err) {
+    vscode.window.showErrorMessage(`Could not copy to the clipboard: ${err.message}`);
+    return;
+  }
+  vscode.window.showInformationMessage(`Copied: ${text}`);
+}
+
+// The entries of the click menu, in display order. Each acts on the state the
+// menu was opened with, so it matches what the label showed when clicked;
+// `description` previews the result in the menu itself.
+function menuEntries(state) {
+  return [
+    { label: 'Show details', run: showDetails },
+    {
+      label: 'Copy branch @ commit',
+      description: state.ok ? branchAtCommit(state) : 'no git',
+      run: copyBranchAtCommit,
+    },
+  ];
 }
 
 function sketchFolder(vscode) {
@@ -150,7 +196,7 @@ function activate(context) {
     vscode.StatusBarAlignment.Left,
     STATUS_BAR_PRIORITY
   );
-  item.command = COMMAND_ID;
+  item.command = MENU_COMMAND_ID;
   context.subscriptions.push(item);
 
   let lastState = null;
@@ -189,17 +235,31 @@ function activate(context) {
     }
   }
 
+  async function freshState() {
+    await refresh();
+    if (!lastState) {
+      vscode.window.showInformationMessage('Still reading the git state; try again in a moment.');
+    }
+    return lastState;
+  }
+
   context.subscriptions.push(
-    vscode.commands.registerCommand(COMMAND_ID, async () => {
-      await refresh();
-      if (!lastState) {
-        vscode.window.showInformationMessage('Still reading the git state; try again in a moment.');
+    vscode.commands.registerCommand(MENU_COMMAND_ID, async () => {
+      const state = await freshState();
+      if (!state) {
         return;
       }
-      const view = formatState(lastState);
-      vscode.window.showInformationMessage(view.tooltip.replace(/\nClick for details\.$/, ''), {
-        modal: true,
-      });
+      // Resolves to the picked entry object itself, so its `run` comes along.
+      const picked = await vscode.window.showQuickPick(menuEntries(state));
+      if (picked) {
+        await picked.run(vscode, state);
+      }
+    }),
+    vscode.commands.registerCommand(DETAILS_COMMAND_ID, async () => {
+      const state = await freshState();
+      if (state) {
+        showDetails(vscode, state);
+      }
     }),
     vscode.workspace.onDidSaveTextDocument(refresh),
     vscode.workspace.onDidChangeWorkspaceFolders(refresh),
@@ -226,4 +286,4 @@ function activate(context) {
   refresh();
 }
 
-module.exports = { activate, readGitState, formatState, readSettings };
+module.exports = { activate, readGitState, formatState, readSettings, branchAtCommit, menuEntries };
