@@ -11,7 +11,6 @@ const GIT_TIMEOUT_MS = 4000;
 const STATUS_BAR_PRIORITY = 100;
 const MENU_COMMAND_ID = 'gitBranchIndicator.openMenu';
 const DETAILS_COMMAND_ID = 'gitBranchIndicator.showDetails';
-const CLICK_HINT = 'Click for details, copy, or open on GitHub.';
 const SETTINGS_SECTION = 'gitBranchIndicator';
 
 // A value typed into settings.json is not held to the schema in package.json;
@@ -184,23 +183,62 @@ function upstreamLine(state) {
   return `Upstream: ${state.upstream}, ${counts} (as of the last fetch; this indicator never fetches)`;
 }
 
-function formatState(state, { showAheadBehind = true } = {}) {
+// Only what needs attention, so a clean branch in step with its upstream
+// reads "clean". Changes already explain the warning colour; a protected
+// branch is named because nothing else on the label says why it is red.
+function attentionParts(state, settings) {
+  const parts = [];
+  for (const [count, what] of [
+    [state.staged, 'staged'],
+    [state.unstaged, 'unstaged'],
+    [state.untracked, 'untracked'],
+  ]) {
+    if (count > 0) {
+      parts.push(`${count} ${what}`);
+    }
+  }
+  if (parts.length === 0) {
+    parts.push('clean');
+  }
+  if (state.stashes > 0) {
+    parts.push(state.stashes === 1 ? '1 stash' : `${state.stashes} stashes`);
+  }
+  if (state.upstream && state.ahead === null) {
+    parts.push(`upstream ${state.upstream} gone`);
+  } else if (state.ahead > 0 || state.behind > 0) {
+    parts.push(`${aheadBehindMark(state).trim()} vs ${state.upstream}`);
+  }
+  if (warningColour(state, settings) === 'statusBarItem.errorBackground') {
+    parts.push('protected branch');
+  }
+  return parts;
+}
+
+// `tooltip` is the short hover text; `details` is everything, for the Show
+// details dialog.
+function formatState(state, settings = {}) {
   if (!state.ok) {
+    const lines = [state.reason, `Folder: ${state.folder}`];
     return {
       text: '$(git-branch) no git',
-      tooltip: [state.reason, `Folder: ${state.folder}`, ...followingLines(state), CLICK_HINT].join(
-        '\n'
-      ),
+      tooltip: lines.join('\n'),
+      details: [...lines, ...followingLines(state)].join('\n'),
     };
   }
   const branchLabel = state.branch || 'detached';
-  // Untracked files show only here, never in the "*": build output and
-  // scratch files would otherwise mark every checkout as modified.
+  // Untracked files show only in the tooltip, never in the "*": build output
+  // and scratch files would otherwise mark every checkout as modified.
   const dirtyMark = state.changedFiles > 0 ? ' *' : '';
-  const aheadBehind = showAheadBehind ? aheadBehindMark(state) : '';
+  const aheadBehind = settings.showAheadBehind === false ? '' : aheadBehindMark(state);
+  const subject = state.subject ? ` · ${state.subject}` : '';
   return {
     text: `$(git-branch) ${repositoryPrefix(state)}${branchLabel} @ ${state.commit}${aheadBehind}${dirtyMark}`,
     tooltip: [
+      `${repositoryPrefix(state)}${branchLabel} @ ${state.commit}${subject}`,
+      `${state.author}, ${state.age}`,
+      attentionParts(state, settings).join(' · '),
+    ].join('\n'),
+    details: [
       `Branch: ${state.branch || 'detached HEAD'}`,
       `Commit: ${state.commit} ${state.subject}`,
       `Author: ${state.author}, ${state.age}`,
@@ -209,29 +247,22 @@ function formatState(state, { showAheadBehind = true } = {}) {
       upstreamLine(state),
       `Repository: ${state.root}`,
       ...followingLines(state),
-      CLICK_HINT,
     ].join('\n'),
   };
 }
 
-// The theme colour behind the item and the tooltip line saying why, or null to
-// leave it uncoloured. Error beats warning: committing to a protected branch is
-// the costlier mistake, and uncommitted changes there still show as `*`.
+// The theme colour behind the item, or null to leave it uncoloured. Error
+// beats warning: committing to a protected branch is the costlier mistake, and
+// uncommitted changes there still show as `*`.
 function warningColour(state, settings) {
   if (!settings.warningColours || !state.ok) {
     return null;
   }
   if (state.branch && settings.protectedBranches.includes(state.branch)) {
-    return {
-      themeColor: 'statusBarItem.errorBackground',
-      reason: `Coloured: ${state.branch} is a protected branch (gitBranchIndicator.protectedBranches).`,
-    };
+    return 'statusBarItem.errorBackground';
   }
   if (state.changedFiles > 0) {
-    return {
-      themeColor: 'statusBarItem.warningBackground',
-      reason: 'Coloured: tracked files have uncommitted changes.',
-    };
+    return 'statusBarItem.warningBackground';
   }
   return null;
 }
@@ -245,10 +276,7 @@ function branchAtCommit(state) {
 }
 
 function showDetails(vscode, state) {
-  const view = formatState(state);
-  vscode.window.showInformationMessage(view.tooltip.slice(0, -`\n${CLICK_HINT}`.length), {
-    modal: true,
-  });
+  vscode.window.showInformationMessage(formatState(state).details, { modal: true });
 }
 
 async function copyBranchAtCommit(vscode, state) {
@@ -527,8 +555,8 @@ function activate(context) {
       const view = formatState(lastState, settings);
       const warning = warningColour(lastState, settings);
       item.text = view.text;
-      item.tooltip = warning ? `${warning.reason}\n${view.tooltip}` : view.tooltip;
-      item.backgroundColor = warning ? new vscode.ThemeColor(warning.themeColor) : undefined;
+      item.tooltip = view.tooltip;
+      item.backgroundColor = warning ? new vscode.ThemeColor(warning) : undefined;
       item.show();
       refreshing = false;
       if (refreshAgain) {

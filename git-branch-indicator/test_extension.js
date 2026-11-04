@@ -107,10 +107,11 @@ test('modified tracked file marks the item; untracked file does not', async () =
   state = await readGitState(repo);
   assert.strictEqual(state.changedFiles, 1);
   assert.ok(formatState(state).text.endsWith(' *'));
-  assert.match(formatState(state).tooltip, /\nChanges: 0 staged, 1 unstaged, 1 untracked\n/);
+  assert.match(formatState(state).details, /\nChanges: 0 staged, 1 unstaged, 1 untracked\n/);
+  assert.strictEqual(formatState(state).tooltip.split('\n')[2], '1 unstaged · 1 untracked');
 });
 
-test('tooltip counts staged, unstaged, untracked and stashes, and names the author and age', async () => {
+test('details count staged, unstaged, untracked and stashes; the tooltip only what is non-zero', async () => {
   const repo = makeRepo();
   let state = await readGitState(repo);
   assert.strictEqual(state.author, 'test');
@@ -140,7 +141,12 @@ test('tooltip counts staged, unstaged, untracked and stashes, and names the auth
     [1, 1, 1, 2, 2],
     'a new folder counts as one untracked entry'
   );
-  const lines = formatState(state).tooltip.split('\n');
+  assert.deepStrictEqual(formatState(state).tooltip.split('\n'), [
+    `feat/1-example @ ${state.commit} · first commit`,
+    `test, ${state.age}`,
+    '1 staged · 1 unstaged · 2 untracked · 2 stashes',
+  ]);
+  const lines = formatState(state).details.split('\n');
   assert.deepStrictEqual(lines.slice(2, 5), [
     `Author: test, ${state.age}`,
     'Changes: 1 staged, 1 unstaged, 2 untracked',
@@ -170,12 +176,13 @@ test('detached HEAD', async () => {
   assert.match(formatState(state).text, /^\$\(git-branch\) detached @ /);
 });
 
-test('no upstream: plain label, "no upstream" in the tooltip', async () => {
+test('no upstream: plain label, "no upstream" in the details', async () => {
   const state = await readGitState(makeRepo());
   assert.strictEqual(state.upstream, null);
   assert.strictEqual(state.ahead, null);
   assert.strictEqual(formatState(state).text, `$(git-branch) feat/1-example @ ${state.commit}`);
-  assert.match(formatState(state).tooltip, /\nUpstream: none \(no upstream set\)\n/);
+  assert.match(formatState(state).details, /\nUpstream: none \(no upstream set\)\n/);
+  assert.strictEqual(formatState(state).tooltip.split('\n')[2], 'clean');
 });
 
 test('ahead/behind counts against the upstream, as of the last fetch', async () => {
@@ -183,7 +190,8 @@ test('ahead/behind counts against the upstream, as of the last fetch', async () 
   let state = await readGitState(repo);
   assert.deepStrictEqual([state.upstream, state.ahead, state.behind], ['origin/feat/1-example', 0, 0]);
   assert.strictEqual(formatState(state).text, `$(git-branch) feat/1-example @ ${state.commit}`);
-  assert.match(formatState(state).tooltip, /\nUpstream: origin\/feat\/1-example, up to date \(as of the last fetch; this indicator never fetches\)\n/);
+  assert.match(formatState(state).details, /\nUpstream: origin\/feat\/1-example, up to date \(as of the last fetch; this indicator never fetches\)\n/);
+  assert.strictEqual(formatState(state).tooltip.split('\n')[2], 'clean');
 
   emptyCommit(other, 'pushed elsewhere');
   git(other, 'push', '-q');
@@ -199,7 +207,11 @@ test('ahead/behind counts against the upstream, as of the last fetch', async () 
   fs.appendFileSync(path.join(repo, 'sketch', 'sketch.ino'), 'void loop() {}\n');
   state = await readGitState(repo);
   assert.strictEqual(formatState(state).text, `$(git-branch) feat/1-example @ ${state.commit} ↑2 ↓1 *`);
-  assert.match(formatState(state).tooltip, /\nUpstream: origin\/feat\/1-example, 2 ahead, 1 behind \(as of the last fetch/);
+  assert.match(formatState(state).details, /\nUpstream: origin\/feat\/1-example, 2 ahead, 1 behind \(as of the last fetch/);
+  assert.strictEqual(
+    formatState(state).tooltip.split('\n')[2],
+    '1 unstaged · ↑2 ↓1 vs origin/feat/1-example'
+  );
   assert.strictEqual(
     formatState(state, { showAheadBehind: false }).text,
     `$(git-branch) feat/1-example @ ${state.commit} *`
@@ -214,7 +226,8 @@ test('upstream whose remote branch is gone', async () => {
   assert.strictEqual(state.upstream, 'origin/feat/1-example');
   assert.strictEqual(state.ahead, null);
   assert.strictEqual(formatState(state).text, `$(git-branch) feat/1-example @ ${state.commit}`);
-  assert.match(formatState(state).tooltip, /\nUpstream: origin\/feat\/1-example not found \(deleted on the remote, or not fetched yet\)\n/);
+  assert.match(formatState(state).details, /\nUpstream: origin\/feat\/1-example not found \(deleted on the remote, or not fetched yet\)\n/);
+  assert.strictEqual(formatState(state).tooltip.split('\n')[2], 'clean · upstream origin/feat/1-example gone');
 });
 
 test('folder outside any repository names the reason', async () => {
@@ -639,7 +652,7 @@ test('showAheadBehind toggles the counts on the label at once', async () => {
     assert.match(fake.item.text, / ↑1$/);
     fake.changeSettings({ 'gitBranchIndicator.showAheadBehind': false });
     await waitFor(() => !fake.item.text.includes('↑'), 'the counts to disappear');
-    assert.match(fake.item.tooltip, /, 1 ahead, 0 behind \(as of the last fetch/, 'the tooltip keeps them');
+    assert.match(fake.item.tooltip, /\nclean · ↑1 vs origin\/feat\/1-example$/, 'the tooltip keeps them');
     fake.changeSettings({ 'gitBranchIndicator.showAheadBehind': true });
     await waitFor(() => fake.item.text.endsWith(' ↑1'), 'the counts to return');
   } finally {
@@ -687,10 +700,7 @@ test('colour settings fall back to defaults; non-string branches are dropped', (
 test('warning colour per state; protected branch wins over uncommitted changes', () => {
   const on = { warningColours: true, protectedBranches: ['main', 'master'] };
   const clean = { ok: true, branch: 'feat/x', commit: 'af3346a', changedFiles: 0 };
-  const colour = (state, settings = on) => {
-    const warning = warningColour(state, settings);
-    return warning && warning.themeColor;
-  };
+  const colour = (state, settings = on) => warningColour(state, settings);
   assert.strictEqual(colour(clean), null);
   assert.strictEqual(colour({ ...clean, changedFiles: 1 }), 'statusBarItem.warningBackground');
   assert.strictEqual(colour({ ...clean, branch: 'main' }), 'statusBarItem.errorBackground');
@@ -709,33 +719,25 @@ test('warning colour per state; protected branch wins over uncommitted changes',
   const off = { ...on, warningColours: false };
   assert.strictEqual(colour({ ...clean, branch: 'main', changedFiles: 1 }, off), null);
 
-  assert.strictEqual(
-    warningColour({ ...clean, branch: 'main' }, on).reason,
-    'Coloured: main is a protected branch (gitBranchIndicator.protectedBranches).'
-  );
-  assert.strictEqual(
-    warningColour({ ...clean, changedFiles: 1 }, on).reason,
-    'Coloured: tracked files have uncommitted changes.'
-  );
 });
 
-test('the item is coloured with the reason first in the tooltip; settings toggle it', async () => {
+test('the item is coloured, the tooltip names a protected branch; settings toggle it', async () => {
   const repo = makeRepo();
   git(repo, 'checkout', '-q', '-b', 'main');
   const fake = await activateFake(repo);
   const colour = () => fake.item.backgroundColor && fake.item.backgroundColor.id;
   try {
     assert.strictEqual(colour(), 'statusBarItem.errorBackground');
-    assert.match(fake.item.tooltip, /^Coloured: main is a protected branch .*\nBranch: main\n/);
+    assert.match(fake.item.tooltip, /\nclean · protected branch$/);
 
     fs.appendFileSync(path.join(repo, 'sketch', 'sketch.ino'), 'void loop() {}\n');
     fake.changeSettings({ 'gitBranchIndicator.protectedBranches': ['master'] });
     await waitFor(() => colour() === 'statusBarItem.warningBackground', 'the warning colour');
-    assert.match(fake.item.tooltip, /^Coloured: tracked files have uncommitted changes\.\nBranch: main\n/);
+    assert.match(fake.item.tooltip, /\n1 unstaged$/);
 
     fake.changeSettings({ 'gitBranchIndicator.warningColours': false });
     await waitFor(() => colour() === undefined, 'the colour to clear');
-    assert.match(fake.item.tooltip, /^Branch: main\n/);
+    assert.match(fake.item.tooltip, /^main @ /);
   } finally {
     fake.dispose();
   }
@@ -759,14 +761,19 @@ function makeSketchAndLibrary() {
 test('follows the active file into another repository and back', async () => {
   const { sketch, sketchFile, sketchRepoFile, libraryFile, libraryName } = makeSketchAndLibrary();
   const fake = await activateFake(sketch);
+  const details = async () => {
+    await fake.click('Show details');
+    return fake.messages[fake.messages.length - 1].text;
+  };
   try {
     assert.match(fake.item.text, /^\$\(git-branch\) feat\/1-example @ /);
-    assert.ok(fake.item.tooltip.includes(`Following: ${sketch} (sketch)`));
+    assert.ok((await details()).includes(`Following: ${sketch} (sketch)`));
 
     fake.openEditor(libraryFile);
     const libraryLabel = `$(git-branch) ${libraryName}: lib/main @ `;
     await waitFor(() => fake.item.text.startsWith(libraryLabel), 'the library repository');
-    assert.ok(fake.item.tooltip.includes(`Following: ${path.dirname(libraryFile)} (active file)`));
+    assert.ok((await details()).includes(`Following: ${path.dirname(libraryFile)} (active file)`));
+    assert.ok(fake.item.tooltip.startsWith(`${libraryName}: lib/main @ `));
     await fake.click('Copy branch @ commit');
     assert.match(fake.clipboard[0], new RegExp(`^${libraryName}: lib/main @ [0-9a-f]+$`));
 
@@ -780,7 +787,7 @@ test('follows the active file into another repository and back', async () => {
     fake.openEditor(sketchRepoFile);
     await waitFor(() => fake.item.text.includes(' feat/1-example @ '), 'the sketch repository');
     assert.ok(!fake.item.text.includes(':'), 'no prefix within the sketch repository');
-    assert.ok(fake.item.tooltip.includes(`(active file)`));
+    assert.ok((await details()).includes(`(active file)`));
   } finally {
     fake.dispose();
   }
@@ -792,6 +799,10 @@ test('non-file editors, no editor and files in no repository show the sketch', a
   const fake = await activateFake(sketch);
   const showsLibrary = () => fake.item.text.includes(' lib/main @ ');
   const showsSketch = () => fake.item.text.includes(' feat/1-example @ ');
+  const details = async () => {
+    await fake.click('Show details');
+    return fake.messages[fake.messages.length - 1].text;
+  };
   try {
     for (const [fsPath, scheme] of [
       ['/user/settings.json', 'user-storage'],
@@ -805,7 +816,7 @@ test('non-file editors, no editor and files in no repository show the sketch', a
       await waitFor(showsSketch, `the sketch for ${scheme || 'no'} editor`);
     }
     assert.ok(
-      fake.item.tooltip.includes(`Following: ${sketch} (sketch; the active file is in no git repository)`)
+      (await details()).includes(`Following: ${sketch} (sketch; the active file is in no git repository)`)
     );
   } finally {
     fake.dispose();

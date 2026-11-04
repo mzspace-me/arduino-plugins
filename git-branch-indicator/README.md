@@ -23,9 +23,17 @@ The item's background also warns, in the colours of the IDE's theme:
 | Warning (yellow or orange in most themes) | On any other branch, or a detached HEAD, with uncommitted changes to tracked files |
 | None | Otherwise, or with `no git` |
 
-A protected branch takes the error colour even when clean: committing there by mistake is the costlier slip, and uncommitted changes on it still show as `*`. When the item is coloured, the first line of its tooltip says why. Both can be turned off or changed in [Settings](#settings).
+A protected branch takes the error colour even when clean: committing there by mistake is the costlier slip, and uncommitted changes on it still show as `*`. On a protected branch the tooltip also says `protected branch`. Both can be turned off or changed in [Settings](#settings).
 
-Hover for the details:
+Hover for a short summary, with only what needs attention on the last line:
+
+```
+dev @ af3346a · Fix servo jitter
+Mz, 2 hours ago
+1 staged · 2 unstaged · 3 untracked · 1 stash · ↑2 ↓1 vs origin/dev
+```
+
+A clean branch in step with its upstream reads `clean` on the last line. **Show details** in the click menu gives everything, zeros included:
 
 ```
 Branch: dev
@@ -38,13 +46,13 @@ Repository: C:/Users/me/Arduino/robot
 ```
 
 - **Author** and age are of the last commit, the age as git words it ("2 hours ago").
-- **Changes** counts files: staged (added to the index), unstaged (changed in the working tree, including files with merge conflicts) and untracked (not ignored by `.gitignore`). A file staged and then edited again counts in both staged and unstaged. A new folder holding only untracked files counts once, so an unignored build folder stays cheap to check. Untracked files show only here, never in the `*`.
+- **Changes** counts files: staged (added to the index), unstaged (changed in the working tree, including files with merge conflicts) and untracked (not ignored by `.gitignore`). A file staged and then edited again counts in both staged and unstaged. A new folder holding only untracked files counts once, so an unignored build folder stays cheap to check. Untracked files never count towards the `*`.
 - **Stashes** is the number of entries in `git stash list`.
 - **Upstream** is the branch it tracks, or "no upstream". The ahead/behind counts are as fresh as the last fetch, pull or push: the indicator never fetches, so it never touches the network or prompts for credentials. Fetch yourself to update them.
 
 Click for a menu:
 
-- **Show details**: the same details in a dialog.
+- **Show details**: the full details above, in a dialog.
 - **Copy branch @ commit**: copies the exact build source for notes and bench issues, for example `dev @ af3346a`, or `dev @ af3346a (dirty)` when tracked files have uncommitted changes. On a detached HEAD it copies `detached @ af3346a`; with `no git` it copies nothing and shows the reason.
 - **Open branch on GitHub** / **Open commit on GitHub**: opens the branch (`/tree/<branch>`) or the commit (`/commit/<hash>`) in the browser. The repository comes from the branch's upstream remote, or `origin` when there is none; `https://github.com/o/r`, `git@github.com:o/r` and `ssh://git@github.com/o/r` remotes all work, with or without `.git`. The menu shows `owner/repo: <branch or commit>` next to each entry, or why it cannot open:
 
@@ -62,7 +70,7 @@ The item refreshes every 5 s (see [Settings](#settings)) while the IDE has focus
 
 ### Follow the active file
 
-When the file in the active editor tab lies outside the sketch folder, such as a library opened with **Go to Definition**, the item shows that file's repository instead of the sketch's. The label is prefixed with the repository's folder name when it is not the sketch's repository, and **Copy branch @ commit** copies the prefix too, for example `MyLib: main @ 1b2c3d4`. The tooltip's `Following:` line names the folder being read and whether it is the active file's or the sketch's.
+When the file in the active editor tab lies outside the sketch folder, such as a library opened with **Go to Definition**, the item shows that file's repository instead of the sketch's. The label is prefixed with the repository's folder name when it is not the sketch's repository, and **Copy branch @ commit** copies the prefix too, for example `MyLib: main @ 1b2c3d4`. The `Following:` line in **Show details** names the folder being read and whether it is the active file's or the sketch's.
 
 It shows the sketch's repository again when the active file is in the sketch folder, in no git repository (a board core's header, say), or not a file on disk (such as `settings.json` opened from the settings editor). Focusing the Serial Monitor, Output or a sidebar view keeps the last editor tab followed. Turn it off with `gitBranchIndicator.followActiveFile`.
 
