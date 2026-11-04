@@ -11,3 +11,5 @@ Each plugin folder has its own `build_vsix.ps1`, which packs the `.vsix` without
 To install on another PC without building, download the `.vsix` from the plugin's [release](https://github.com/mzspace-me/arduino-plugins/releases) (tagged `<plugin>-v<version>`) and follow the install steps in its release notes. A plugin's `release.ps1` publishes them.
 
 Planned features and decisions are tracked as [issues](https://github.com/mzspace-me/arduino-plugins/issues).
+
+Made by [Mz](https://mzspace.me). MIT licence, see [LICENSE](LICENSE).

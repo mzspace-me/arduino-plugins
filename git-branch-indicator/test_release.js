@@ -14,7 +14,15 @@ const os = require('os');
 const path = require('path');
 
 const PLUGIN = path.basename(__dirname);
-const PLUGIN_FILES = ['package.json', 'extension.js', 'README.md', 'build_vsix.ps1', 'release.ps1'];
+const PLUGIN_FILES = [
+  'package.json',
+  'extension.js',
+  'README.md',
+  'CHANGELOG.md',
+  'icon.png',
+  'build_vsix.ps1',
+  'release.ps1',
+];
 const { version, name: packageName } = require('./package.json');
 const TAG = `${PLUGIN}-v${version}`;
 const GH_REPO = 'owner/arduino-plugins';
@@ -62,6 +70,8 @@ function makeRepo() {
   for (const file of PLUGIN_FILES) {
     fs.copyFileSync(path.join(__dirname, file), path.join(repo, PLUGIN, file));
   }
+  // The repository-wide licence, which build_vsix.ps1 packs from the root.
+  fs.copyFileSync(path.join(__dirname, '..', 'LICENSE'), path.join(repo, 'LICENSE'));
   commit(repo, 'feat: first plugin commit');
   git(repo, 'remote', 'add', 'origin', origin);
   git(repo, 'push', '-q', 'origin', 'main');

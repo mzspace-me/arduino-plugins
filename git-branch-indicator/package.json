@@ -2,14 +2,33 @@
   "name": "arduino-git-branch-indicator",
   "displayName": "Git Branch Indicator",
   "description": "Shows the checked-out git branch and commit of the open sketch in the Arduino IDE 2 status bar.",
-  "version": "0.1.10",
+  "version": "0.2.0",
   "publisher": "mzspace",
   "author": {
     "name": "Mz",
     "url": "https://mzspace.me"
   },
-  "license": "UNLICENSED",
-  "private": true,
+  "license": "MIT",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mzspace-me/arduino-plugins.git",
+    "directory": "git-branch-indicator"
+  },
+  "homepage": "https://github.com/mzspace-me/arduino-plugins/tree/main/git-branch-indicator#readme",
+  "bugs": {
+    "url": "https://github.com/mzspace-me/arduino-plugins/issues"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "arduino",
+    "arduino ide",
+    "git",
+    "branch",
+    "status bar"
+  ],
   "engines": {
     "vscode": "^1.50.0"
   },

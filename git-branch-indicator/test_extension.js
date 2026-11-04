@@ -266,6 +266,23 @@ test('extension id and author credit', () => {
   assert.deepStrictEqual(pkg.author, { name: 'Mz', url: 'https://mzspace.me' });
 });
 
+// Open VSX rejects an extension without a licence and lists it with the icon,
+// changelog and links read from these fields and files.
+test('Open VSX listing: licence, icon, changelog and links', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
+  assert.strictEqual(pkg.license, 'MIT');
+  assert.strictEqual(pkg.private, undefined, 'a private package cannot be published');
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'LICENSE'), 'utf8'), /^MIT License\n\nCopyright \(c\) \d{4} Mz\n/);
+  assert.match(fs.readFileSync(path.join(__dirname, 'CHANGELOG.md'), 'utf8'), new RegExp(`\\n## ${pkg.version.replace(/\./g, '\\.')}\\n`));
+  assert.strictEqual(pkg.repository.url, 'https://github.com/mzspace-me/arduino-plugins.git');
+  assert.ok(pkg.bugs.url && pkg.homepage && pkg.categories.length > 0 && pkg.keywords.length > 0);
+
+  // PNG header: signature, then the IHDR width and height as big-endian ints.
+  const icon = fs.readFileSync(path.join(__dirname, pkg.icon));
+  assert.ok(icon.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])));
+  assert.deepStrictEqual([icon.readUInt32BE(16), icon.readUInt32BE(20)], [128, 128]);
+});
+
 async function waitFor(condition, what) {
   for (let i = 0; i < 50 && !condition(); i++) {
     await new Promise((resolve) => setTimeout(resolve, 100));

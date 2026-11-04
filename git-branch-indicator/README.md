@@ -102,7 +102,7 @@ Changes apply at once, without restarting the IDE. A value outside 1 to 300 is c
 
 ## Install
 
-On a PC without this repository, take the `.vsix` from the latest `git-branch-indicator-v*` [release](https://github.com/mzspace-me/arduino-plugins/releases), or with the GitHub CLI:
+Arduino IDE 2 has no extension browser, so the `.vsix` is installed by hand. Download it from the [Open VSX page](https://open-vsx.org/extension/mzspace/arduino-git-branch-indicator) (**Download** button), or take it from the latest `git-branch-indicator-v*` [GitHub release](https://github.com/mzspace-me/arduino-plugins/releases), or with the GitHub CLI:
 
 ```
 gh release download git-branch-indicator-v<version> --repo mzspace-me/arduino-plugins --pattern *.vsix
@@ -139,6 +139,23 @@ powershell -ExecutionPolicy Bypass -File git-branch-indicator\release.ps1
 
 It builds the `.vsix` with `build_vsix.ps1` into `dist\release\`, tags the commit `git-branch-indicator-v<version>` (plugin-prefixed, because the repository holds several plugins), pushes the tag, and creates a GitHub release with the `.vsix` attached. The release notes list the commits that touched `git-branch-indicator/` since the previous `git-branch-indicator-v*` tag, followed by install steps. It refuses, and changes nothing, when not on `main`, when tracked files have uncommitted changes, when `main` differs from `origin/main`, when the tag already exists locally or on `origin`, or when `gh` is not signed in. `-DryRun` runs all of that and the build, then prints the tag, the target repository and the notes instead of publishing. Needs git and the [GitHub CLI](https://cli.github.com) (`gh auth login`).
 
+### Publish to Open VSX
+
+The `.vsix` from `build_vsix.ps1` has the same layout `@vscode/vsce` writes (licence, icon, README, changelog and links in its manifest), so it is published as is. The Open VSX account, the publisher agreement and the access token belong to the owner; the token is never written into a file or a command line.
+
+Once: sign in at [open-vsx.org](https://open-vsx.org) with GitHub, sign the Eclipse publisher agreement in your profile, and create an access token under **Settings > Access Tokens**.
+
+Then, from the `Arduino Plugins` folder in PowerShell, with the new version built (`build_vsix.ps1`, no `-Install` needed):
+
+```
+$env:OVSX_PAT = Read-Host 'Open VSX token'
+npx --yes ovsx create-namespace mzspace
+npx --yes ovsx publish git-branch-indicator\dist\arduino-git-branch-indicator-<version>.vsix
+Remove-Item Env:OVSX_PAT
+```
+
+`ovsx` reads the token from `OVSX_PAT`. `create-namespace` is needed only the first time; it fails harmlessly once the namespace exists. A new namespace shows as unverified until its ownership is claimed; see the Open VSX [publishing guide](https://github.com/eclipse/openvsx/wiki/Publishing-Extensions).
+
 ## Author
 
-Made by [Mz](https://mzspace.me). Extension id `mzspace.arduino-git-branch-indicator`.
+Made by [Mz](https://mzspace.me). Extension id `mzspace.arduino-git-branch-indicator`. MIT licence, see [LICENSE](https://github.com/mzspace-me/arduino-plugins/blob/main/LICENSE).

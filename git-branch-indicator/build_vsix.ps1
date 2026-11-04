@@ -27,19 +27,45 @@ $contentTypes = @'
   <Default Extension=".json" ContentType="application/json"/>
   <Default Extension=".js" ContentType="application/javascript"/>
   <Default Extension=".md" ContentType="text/markdown"/>
+  <Default Extension=".png" ContentType="image/png"/>
+  <Default Extension=".txt" ContentType="text/plain"/>
   <Default Extension=".vsixmanifest" ContentType="text/xml"/>
 </Types>
 '@
 
-$escapedDisplayName = [System.Security.SecurityElement]::Escape($package.displayName)
-$escapedDescription = [System.Security.SecurityElement]::Escape($package.description)
+function Escape-Xml([string]$Text) { [System.Security.SecurityElement]::Escape($Text) }
+
+# The same layout @vscode/vsce writes, so Open VSX shows the README, changelog,
+# licence, icon and repository links from the hand-built package too.
+$repositoryUrl = Escape-Xml ($package.repository.url -replace '\.git$', '')
 $manifest = @"
 <?xml version="1.0" encoding="utf-8"?>
-<PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011">
+<PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
   <Metadata>
     <Identity Language="en-US" Id="$name" Version="$version" Publisher="$($package.publisher)"/>
-    <DisplayName>$escapedDisplayName</DisplayName>
-    <Description xml:space="preserve">$escapedDescription</Description>
+    <DisplayName>$(Escape-Xml $package.displayName)</DisplayName>
+    <Description xml:space="preserve">$(Escape-Xml $package.description)</Description>
+    <Tags>$(Escape-Xml ($package.keywords -join ','))</Tags>
+    <Categories>$(Escape-Xml ($package.categories -join ','))</Categories>
+    <GalleryFlags>Public</GalleryFlags>
+    <Properties>
+      <Property Id="Microsoft.VisualStudio.Code.Engine" Value="$(Escape-Xml $package.engines.vscode)"/>
+      <Property Id="Microsoft.VisualStudio.Code.ExtensionDependencies" Value=""/>
+      <Property Id="Microsoft.VisualStudio.Code.ExtensionPack" Value=""/>
+      <Property Id="Microsoft.VisualStudio.Code.ExtensionKind" Value="workspace"/>
+      <Property Id="Microsoft.VisualStudio.Code.LocalizedLanguages" Value=""/>
+      <Property Id="Microsoft.VisualStudio.Code.EnabledApiProposals" Value=""/>
+      <Property Id="Microsoft.VisualStudio.Code.ExecutesCode" Value="true"/>
+      <Property Id="Microsoft.VisualStudio.Services.Links.Source" Value="$repositoryUrl"/>
+      <Property Id="Microsoft.VisualStudio.Services.Links.Getstarted" Value="$repositoryUrl"/>
+      <Property Id="Microsoft.VisualStudio.Services.Links.GitHub" Value="$repositoryUrl"/>
+      <Property Id="Microsoft.VisualStudio.Services.Links.Support" Value="$(Escape-Xml $package.bugs.url)"/>
+      <Property Id="Microsoft.VisualStudio.Services.Links.Learn" Value="$(Escape-Xml $package.homepage)"/>
+      <Property Id="Microsoft.VisualStudio.Services.GitHubFlavoredMarkdown" Value="true"/>
+      <Property Id="Microsoft.VisualStudio.Services.Content.Pricing" Value="Free"/>
+    </Properties>
+    <License>extension/LICENSE.txt</License>
+    <Icon>extension/$($package.icon)</Icon>
   </Metadata>
   <Installation>
     <InstallationTarget Id="Microsoft.VisualStudio.Code"/>
@@ -47,12 +73,25 @@ $manifest = @"
   <Dependencies/>
   <Assets>
     <Asset Type="Microsoft.VisualStudio.Code.Manifest" Path="extension/package.json" Addressable="true"/>
+    <Asset Type="Microsoft.VisualStudio.Services.Content.Details" Path="extension/README.md" Addressable="true"/>
+    <Asset Type="Microsoft.VisualStudio.Services.Content.Changelog" Path="extension/CHANGELOG.md" Addressable="true"/>
+    <Asset Type="Microsoft.VisualStudio.Services.Content.License" Path="extension/LICENSE.txt" Addressable="true"/>
+    <Asset Type="Microsoft.VisualStudio.Services.Icons.Default" Path="extension/$($package.icon)" Addressable="true"/>
   </Assets>
 </PackageManifest>
 "@
 
-# Only the files the IDE needs; the test script and this packer stay out.
-$payload = @('package.json', 'extension.js', 'README.md')
+# Only what the IDE and the Open VSX listing need; tests and scripts stay out.
+# The repository-wide LICENSE goes in as LICENSE.txt, as vsce names it, because
+# the content-types file maps types by extension.
+$payload = [ordered]@{
+    'package.json'          = 'package.json'
+    'extension.js'          = 'extension.js'
+    'README.md'             = 'README.md'
+    'CHANGELOG.md'          = 'CHANGELOG.md'
+    $package.icon           = $package.icon
+    '..\LICENSE'            = 'LICENSE.txt'
+}
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $vsixPath = Join-Path $OutDir $vsixName
@@ -69,9 +108,9 @@ try {
         $writer.Write($entry[1])
         $writer.Dispose()
     }
-    foreach ($file in $payload) {
+    foreach ($source in $payload.Keys) {
         [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
-            $zip, (Join-Path $sourceDir $file), "extension/$file") | Out-Null
+            $zip, (Join-Path $sourceDir $source), "extension/$($payload[$source])") | Out-Null
     }
 }
 finally {
