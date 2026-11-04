@@ -35,4 +35,8 @@ Requires git on the PATH the IDE starts with. Tested with Arduino IDE 2.3.4.
 
 `extension.js` is the whole extension. Bump `version` in `package.json` with each change, then rebuild and reinstall with `-Install`, which also clears the IDE's unpacked copy of the previous build.
 
-`node git-branch-indicator\test_extension.js` checks the git reading, the status-bar text and activation without the IDE (needs Node.js).
+`node git-branch-indicator\test_extension.js` checks the git reading, the status-bar text, activation and the extension id without the IDE (needs Node.js).
+
+## Author
+
+Made by [Mz](https://mzspace.me). Extension id `mzspace.arduino-git-branch-indicator`.

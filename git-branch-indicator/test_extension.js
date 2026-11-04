@@ -106,6 +106,14 @@ test('git missing from PATH', async () => {
   }
 });
 
+// The id is the Open VSX namespace plus the name; changing either orphans
+// installed copies, so it is pinned here.
+test('extension id and author credit', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
+  assert.strictEqual(`${pkg.publisher}.${pkg.name}`, 'mzspace.arduino-git-branch-indicator');
+  assert.deepStrictEqual(pkg.author, { name: 'Mz', url: 'https://mzspace.me' });
+});
+
 test('activate shows the item; clicking it shows the details', async () => {
   const repo = makeRepo();
   const item = { shown: false, show() { this.shown = true; }, dispose() {} };

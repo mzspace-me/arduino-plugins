@@ -80,6 +80,11 @@ finally {
 Write-Output "Built $vsixPath"
 
 if ($Install) {
+    # Both folders are keyed by file name: the IDE names each unpacked copy
+    # after its .vsix minus the extension, and the .vsix is "$name-$version",
+    # with no publisher in it. So the "$name-*" patterns below also clear
+    # copies built while the publisher was still "local" (before 0.1.1); a
+    # change of publisher needs no extra pattern, a change of name would.
     $pluginsDir = Join-Path $env:USERPROFILE '.arduinoIDE\plugins'
     New-Item -ItemType Directory -Force -Path $pluginsDir | Out-Null
     # An older version left beside the new one would load as a second copy.
