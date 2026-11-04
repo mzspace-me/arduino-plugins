@@ -25,6 +25,11 @@ function numberSetting(config, key, fallback, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+function booleanSetting(config, key, fallback) {
+  const value = config.get(key, fallback);
+  return typeof value === 'boolean' ? value : fallback;
+}
+
 // Every setting is read here, one line each, so features read a plain object
 // and the defaults and limits sit in one place next to package.json's
 // contributes.configuration, which must declare the same ones.
@@ -34,6 +39,7 @@ function readSettings(config) {
     // terminal; the IDE raises no event for it. Each poll is four short git
     // calls, and a poll still running when the next is due is skipped.
     pollIntervalSeconds: numberSetting(config, 'pollIntervalSeconds', 5, 1, 300),
+    showAheadBehind: booleanSetting(config, 'showAheadBehind', true),
   };
 }
 
@@ -97,6 +103,9 @@ async function readGitState(folder) {
       return { ok: false, folder, reason: 'The repository has no commits yet.' };
     }
     const branch = header('branch.head');
+    // "+A -B" against the remote-tracking ref, so as fresh as the last fetch.
+    // Missing when there is no upstream, or when its ref is gone.
+    const aheadBehind = /^\+(\d+) -(\d+)$/.exec(header('branch.ab') || '');
     // NUL separators, since an author name or subject may hold any other
     // character. --ignore-missing makes "no stash yet" a count of 0, not an error.
     const [last, stashes] = await Promise.all([
@@ -117,13 +126,45 @@ async function readGitState(folder) {
       unstaged: tracked.filter((l) => unmerged(l) || l[3] !== '.').length,
       untracked: entries.length - tracked.length,
       stashes: Number(stashes),
+      upstream: header('branch.upstream'),
+      ahead: aheadBehind ? Number(aheadBehind[1]) : null,
+      behind: aheadBehind ? Number(aheadBehind[2]) : null,
     };
   } catch (err) {
     return { ok: false, folder, reason: describeGitError(err) };
   }
 }
 
-function formatState(state) {
+// Only the non-zero sides, so a branch in step with its upstream (or without
+// one) keeps the plain label.
+function aheadBehindMark(state) {
+  const parts = [];
+  if (state.ahead > 0) {
+    parts.push(`↑${state.ahead}`);
+  }
+  if (state.behind > 0) {
+    parts.push(`↓${state.behind}`);
+  }
+  return parts.map((part) => ` ${part}`).join('');
+}
+
+// The indicator never fetches, so it cannot trigger a network or credential
+// prompt; the counts are only as fresh as the last fetch, pull or push.
+function upstreamLine(state) {
+  if (!state.upstream) {
+    return 'Upstream: none (no upstream set)';
+  }
+  if (state.ahead === null) {
+    return `Upstream: ${state.upstream} not found (deleted on the remote, or not fetched yet)`;
+  }
+  const counts =
+    state.ahead === 0 && state.behind === 0
+      ? 'up to date'
+      : `${state.ahead} ahead, ${state.behind} behind`;
+  return `Upstream: ${state.upstream}, ${counts} (as of the last fetch; this indicator never fetches)`;
+}
+
+function formatState(state, { showAheadBehind = true } = {}) {
   if (!state.ok) {
     return {
       text: '$(git-branch) no git',
@@ -134,14 +175,16 @@ function formatState(state) {
   // Untracked files show only here, never in the "*": build output and
   // scratch files would otherwise mark every checkout as modified.
   const dirtyMark = state.changedFiles > 0 ? ' *' : '';
+  const aheadBehind = showAheadBehind ? aheadBehindMark(state) : '';
   return {
-    text: `$(git-branch) ${branchLabel} @ ${state.commit}${dirtyMark}`,
+    text: `$(git-branch) ${branchLabel} @ ${state.commit}${aheadBehind}${dirtyMark}`,
     tooltip: [
       `Branch: ${state.branch || 'detached HEAD'}`,
       `Commit: ${state.commit} ${state.subject}`,
       `Author: ${state.author}, ${state.age}`,
       `Changes: ${state.staged} staged, ${state.unstaged} unstaged, ${state.untracked} untracked`,
       `Stashes: ${state.stashes}`,
+      upstreamLine(state),
       `Repository: ${state.root}`,
       CLICK_HINT,
     ].join('\n'),
@@ -244,7 +287,7 @@ function activate(context) {
     } catch (err) {
       lastState = { ok: false, folder: '(unknown)', reason: `Indicator error: ${err.message}` };
     } finally {
-      const view = formatState(lastState);
+      const view = formatState(lastState, settings);
       item.text = view.text;
       item.tooltip = view.tooltip;
       item.show();

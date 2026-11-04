@@ -42,6 +42,25 @@ function makeRepo() {
   return dir;
 }
 
+// A repository from makeRepo whose branch tracks a local bare "remote", plus a
+// second clone that can push commits the first one only sees after a fetch.
+function makeRepoWithUpstream() {
+  const repo = makeRepo();
+  const remote = tempDir('git-indicator-remote-');
+  git(remote, 'init', '-q', '--bare');
+  git(repo, 'remote', 'add', 'origin', remote);
+  git(repo, 'push', '-q', '-u', 'origin', 'feat/1-example');
+  const other = tempDir('git-indicator-other-');
+  git(other, 'clone', '-q', '-b', 'feat/1-example', remote, '.');
+  git(other, 'config', 'user.email', 'test@example.invalid');
+  git(other, 'config', 'user.name', 'test');
+  return { repo, other };
+}
+
+function emptyCommit(cwd, message) {
+  git(cwd, 'commit', '-q', '--allow-empty', '-m', message);
+}
+
 const tests = [];
 function test(name, fn) {
   tests.push({ name, fn });
@@ -128,6 +147,53 @@ test('detached HEAD', async () => {
   const state = await readGitState(repo);
   assert.strictEqual(state.branch, null);
   assert.match(formatState(state).text, /^\$\(git-branch\) detached @ /);
+});
+
+test('no upstream: plain label, "no upstream" in the tooltip', async () => {
+  const state = await readGitState(makeRepo());
+  assert.strictEqual(state.upstream, null);
+  assert.strictEqual(state.ahead, null);
+  assert.strictEqual(formatState(state).text, `$(git-branch) feat/1-example @ ${state.commit}`);
+  assert.match(formatState(state).tooltip, /\nUpstream: none \(no upstream set\)\n/);
+});
+
+test('ahead/behind counts against the upstream, as of the last fetch', async () => {
+  const { repo, other } = makeRepoWithUpstream();
+  let state = await readGitState(repo);
+  assert.deepStrictEqual([state.upstream, state.ahead, state.behind], ['origin/feat/1-example', 0, 0]);
+  assert.strictEqual(formatState(state).text, `$(git-branch) feat/1-example @ ${state.commit}`);
+  assert.match(formatState(state).tooltip, /\nUpstream: origin\/feat\/1-example, up to date \(as of the last fetch; this indicator never fetches\)\n/);
+
+  emptyCommit(other, 'pushed elsewhere');
+  git(other, 'push', '-q');
+  state = await readGitState(repo);
+  assert.strictEqual(state.behind, 0, 'the indicator must not fetch');
+
+  git(repo, 'fetch', '-q');
+  state = await readGitState(repo);
+  assert.strictEqual(formatState(state).text, `$(git-branch) feat/1-example @ ${state.commit} ↓1`);
+
+  emptyCommit(repo, 'local one');
+  emptyCommit(repo, 'local two');
+  fs.appendFileSync(path.join(repo, 'sketch', 'sketch.ino'), 'void loop() {}\n');
+  state = await readGitState(repo);
+  assert.strictEqual(formatState(state).text, `$(git-branch) feat/1-example @ ${state.commit} ↑2 ↓1 *`);
+  assert.match(formatState(state).tooltip, /\nUpstream: origin\/feat\/1-example, 2 ahead, 1 behind \(as of the last fetch/);
+  assert.strictEqual(
+    formatState(state, { showAheadBehind: false }).text,
+    `$(git-branch) feat/1-example @ ${state.commit} *`
+  );
+});
+
+test('upstream whose remote branch is gone', async () => {
+  const { repo, other } = makeRepoWithUpstream();
+  git(other, 'push', '-q', 'origin', '--delete', 'feat/1-example');
+  git(repo, 'fetch', '-q', '--prune');
+  const state = await readGitState(repo);
+  assert.strictEqual(state.upstream, 'origin/feat/1-example');
+  assert.strictEqual(state.ahead, null);
+  assert.strictEqual(formatState(state).text, `$(git-branch) feat/1-example @ ${state.commit}`);
+  assert.match(formatState(state).tooltip, /\nUpstream: origin\/feat\/1-example not found \(deleted on the remote, or not fetched yet\)\n/);
 });
 
 test('folder outside any repository names the reason', async () => {
@@ -368,6 +434,26 @@ test('settings fall back to defaults and are held to their limits', () => {
   assert.strictEqual(readSettings(config({ pollIntervalSeconds: 9999 })).pollIntervalSeconds, 300);
   assert.strictEqual(readSettings(config({ pollIntervalSeconds: '10' })).pollIntervalSeconds, 5);
   assert.strictEqual(readSettings(config({ pollIntervalSeconds: null })).pollIntervalSeconds, 5);
+  assert.strictEqual(readSettings(config({})).showAheadBehind, true);
+  assert.strictEqual(readSettings(config({ showAheadBehind: false })).showAheadBehind, false);
+  assert.strictEqual(readSettings(config({ showAheadBehind: 'false' })).showAheadBehind, true);
+  assert.strictEqual(readSettings(config({ showAheadBehind: 0 })).showAheadBehind, true);
+});
+
+test('showAheadBehind toggles the counts on the label at once', async () => {
+  const { repo } = makeRepoWithUpstream();
+  emptyCommit(repo, 'local one');
+  const fake = await activateFake(repo);
+  try {
+    assert.match(fake.item.text, / ↑1$/);
+    fake.changeSettings({ 'gitBranchIndicator.showAheadBehind': false });
+    await waitFor(() => !fake.item.text.includes('↑'), 'the counts to disappear');
+    assert.match(fake.item.tooltip, /, 1 ahead, 0 behind \(as of the last fetch/, 'the tooltip keeps them');
+    fake.changeSettings({ 'gitBranchIndicator.showAheadBehind': true });
+    await waitFor(() => fake.item.text.endsWith(' ↑1'), 'the counts to return');
+  } finally {
+    fake.dispose();
+  }
 });
 
 test('a settings change applies at once without restarting', async () => {

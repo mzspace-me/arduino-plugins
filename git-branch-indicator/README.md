@@ -9,7 +9,8 @@ An Arduino IDE 2 extension that shows the git branch and commit of the open sket
 | Shown | Meaning |
 |---|---|
 | `dev @ af3346a` | Branch `dev`, commit `af3346a`, no uncommitted changes to tracked files |
-| `*` after the commit | One or more tracked files have uncommitted changes (untracked files are ignored) |
+| `↑2 ↓1` after the commit | The branch has 2 commits its upstream lacks and lacks 1 commit the upstream has. Only non-zero sides are shown; nothing is shown in step with the upstream or without one |
+| `*` at the end | One or more tracked files have uncommitted changes (untracked files are ignored) |
 | `detached @ af3346a` | HEAD is on a commit, not a branch |
 | `no git` | git is not on the IDE's PATH, the sketch is not in a repository, or the repository has no commits. Hover for the reason |
 
@@ -21,12 +22,14 @@ Commit: af3346a Fix servo jitter
 Author: Mz, 2 hours ago
 Changes: 1 staged, 2 unstaged, 3 untracked
 Stashes: 1
+Upstream: origin/dev, 2 ahead, 1 behind
 Repository: C:/Users/me/Arduino/robot
 ```
 
 - **Author** and age are of the last commit, the age as git words it ("2 hours ago").
 - **Changes** counts files: staged (added to the index), unstaged (changed in the working tree, including files with merge conflicts) and untracked (not ignored by `.gitignore`). A file staged and then edited again counts in both staged and unstaged. A new folder holding only untracked files counts once, so an unignored build folder stays cheap to check. Untracked files show only here, never in the `*`.
 - **Stashes** is the number of entries in `git stash list`.
+- **Upstream** is the branch it tracks, or "no upstream". The ahead/behind counts are as fresh as the last fetch, pull or push: the indicator never fetches, so it never touches the network or prompts for credentials. Fetch yourself to update them.
 
 Click for a menu:
 
@@ -43,15 +46,17 @@ Press `Ctrl+Shift+P`, run **Preferences: Open Settings (UI)** and search for `Gi
 
 ```json
 {
-  "gitBranchIndicator.pollIntervalSeconds": 5
+  "gitBranchIndicator.pollIntervalSeconds": 5,
+  "gitBranchIndicator.showAheadBehind": true
 }
 ```
 
 | Setting | Default | Meaning |
 |---|---|---|
 | `gitBranchIndicator.pollIntervalSeconds` | `5` | Seconds between checks for a branch switch or commit made outside the IDE, from 1 to 300. Checks pause while the IDE is in the background |
+| `gitBranchIndicator.showAheadBehind` | `true` | Show the `↑`/`↓` counts against the upstream on the label. The tooltip shows them either way |
 
-Changes apply at once, without restarting the IDE. A value outside 1 to 300 is clamped to that range, and a value that is not a number is ignored in favour of the default.
+Changes apply at once, without restarting the IDE. A value outside 1 to 300 is clamped to that range, and a value of the wrong type (such as `"10"` or `"false"` in quotes) is ignored in favour of the default.
 
 ## Install
 
