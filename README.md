@@ -8,4 +8,4 @@ Extensions for Arduino IDE 2. The IDE is built on Eclipse Theia and loads VS Cod
 
 Each plugin folder has its own `build_vsix.ps1`, which packs the `.vsix` without npm and installs it with `-Install`.
 
-Planned features and decisions are tracked as [issues](https://github.com/MotazBanyAmer/arduino-plugins/issues).
+Planned features and decisions are tracked as [issues](https://github.com/mzspace-me/arduino-plugins/issues).
