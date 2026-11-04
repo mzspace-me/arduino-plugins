@@ -11,7 +11,7 @@ const GIT_TIMEOUT_MS = 4000;
 const STATUS_BAR_PRIORITY = 100;
 const MENU_COMMAND_ID = 'gitBranchIndicator.openMenu';
 const DETAILS_COMMAND_ID = 'gitBranchIndicator.showDetails';
-const CLICK_HINT = 'Click for details and copy.';
+const CLICK_HINT = 'Click for details, copy, or open on GitHub.';
 const SETTINGS_SECTION = 'gitBranchIndicator';
 
 // A value typed into settings.json is not held to the schema in package.json;
@@ -266,16 +266,159 @@ async function copyBranchAtCommit(vscode, state) {
   vscode.window.showInformationMessage(`Copied: ${text}`);
 }
 
+// The forms GitHub offers for cloning, each with or without ".git":
+// https://github.com/o/r, git@github.com:o/r and ssh://git@github.com/o/r.
+// Returns "o/r", or null for a remote that is not on GitHub.
+function githubRepo(remoteUrl) {
+  const match =
+    /^(?:(?:https?|ssh|git):\/\/(?:[^@/]+@)?github\.com(?::\d+)?\/|(?:[^@/]+@)?github\.com:)([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(
+      remoteUrl.trim()
+    );
+  return match ? `${match[1]}/${match[2]}` : null;
+}
+
+// A link the menu cannot open: `description` is the short form shown in the
+// menu, `reason` the sentence shown when it is picked anyway.
+function unavailable(description, reason) {
+  return { description, reason };
+}
+
+// The remote branch the local branch pushes to, or null when it has none on a
+// remote (a branch never pushed, or one tracking another local branch).
+async function readUpstream(root, branch) {
+  const out = await runGit(root, [
+    'for-each-ref',
+    '--format=%(upstream:remotename)%00%(upstream:remoteref)%00%(upstream:track)',
+    `refs/heads/${branch}`,
+  ]);
+  const [remote, ref, track] = out.split('\0');
+  if (!remote || remote === '.') {
+    return null;
+  }
+  return { remote, branch: ref.replace(/^refs\/heads\//, ''), gone: track === '[gone]' };
+}
+
+async function readRemoteRepo(root, remote) {
+  let url;
+  try {
+    url = await runGit(root, ['remote', 'get-url', remote]);
+  } catch (err) {
+    if (/no such remote/i.test(err.gitStderr || '')) {
+      return unavailable('no remote', `The repository has no remote named ${remote}.`);
+    }
+    throw err;
+  }
+  const repo = githubRepo(url);
+  return repo
+    ? { repo }
+    : unavailable('not on GitHub', `Remote ${remote} does not point at github.com.`);
+}
+
+// Read when the menu opens rather than on every poll: only these two entries
+// need the remote, and a poll stays at three git calls.
+async function readGitHubLinks(state) {
+  if (!state.ok) {
+    const noGit = unavailable('no git', state.reason);
+    return { branch: noGit, commit: noGit };
+  }
+  try {
+    const upstream = state.branch ? await readUpstream(state.root, state.branch) : null;
+    // A pushed branch names its remote; otherwise, as on a detached HEAD,
+    // origin is the one GitHub clones and `git push -u` set up.
+    const remote = upstream ? upstream.remote : 'origin';
+    const [target, fullCommit, remoteRefWithCommit] = await Promise.all([
+      readRemoteRepo(state.root, remote),
+      runGit(state.root, ['rev-parse', '--verify', `${state.commit}^{commit}`]),
+      runGit(state.root, [
+        'for-each-ref',
+        '--count=1',
+        '--format=%(refname)',
+        '--contains',
+        state.commit,
+        `refs/remotes/${remote}`,
+      ]),
+    ]);
+    const base = target.repo && `https://github.com/${target.repo}`;
+
+    let branch;
+    if (!state.branch) {
+      branch = unavailable('detached HEAD', 'HEAD is detached, so there is no branch to open.');
+    } else if (!base) {
+      branch = target;
+    } else if (!upstream) {
+      branch = unavailable(
+        'not pushed',
+        `Branch ${state.branch} has no upstream on GitHub yet; push it with "git push -u ${remote} ${state.branch}" first.`
+      );
+    } else if (upstream.gone) {
+      branch = unavailable(
+        'upstream gone',
+        `The upstream of ${state.branch}, ${remote}/${upstream.branch}, no longer exists as of the last fetch.`
+      );
+    } else {
+      // Slashes in a branch name are path separators in GitHub's /tree/ URLs;
+      // every other character is escaped.
+      const urlPath = upstream.branch.split('/').map(encodeURIComponent).join('/');
+      branch = { url: `${base}/tree/${urlPath}`, description: `${target.repo}: ${upstream.branch}` };
+    }
+
+    let commit;
+    if (!base) {
+      commit = target;
+    } else if (!remoteRefWithCommit) {
+      // GitHub would answer a commit it has not received with a 404.
+      commit = unavailable(
+        'not pushed',
+        `Commit ${state.commit} is not on ${remote} as of the last fetch or push; push it first.`
+      );
+    } else {
+      commit = { url: `${base}/commit/${fullCommit}`, description: `${target.repo}: ${state.commit}` };
+    }
+    return { branch, commit };
+  } catch (err) {
+    const failed = unavailable('git error', describeGitError(err));
+    return { branch: failed, commit: failed };
+  }
+}
+
+async function openOnGitHub(vscode, link) {
+  if (!link.url) {
+    vscode.window.showWarningMessage(`Cannot open on GitHub: ${link.reason}`);
+    return;
+  }
+  let opened;
+  try {
+    opened = await vscode.env.openExternal(vscode.Uri.parse(link.url));
+  } catch (err) {
+    vscode.window.showErrorMessage(`Could not open ${link.url}: ${err.message}`);
+    return;
+  }
+  if (opened === false) {
+    vscode.window.showErrorMessage(`The IDE declined to open ${link.url}.`);
+  }
+}
+
 // The entries of the click menu, in display order. Each acts on the state the
 // menu was opened with, so it matches what the label showed when clicked;
-// `description` previews the result in the menu itself.
-function menuEntries(state) {
+// `description` previews the result in the menu itself, or says why an entry
+// cannot work, so an entry never just disappears.
+function menuEntries(state, links) {
   return [
     { label: 'Show details', run: showDetails },
     {
       label: 'Copy branch @ commit',
       description: state.ok ? branchAtCommit(state) : 'no git',
       run: copyBranchAtCommit,
+    },
+    {
+      label: 'Open branch on GitHub',
+      description: links.branch.description,
+      run: (vscode) => openOnGitHub(vscode, links.branch),
+    },
+    {
+      label: 'Open commit on GitHub',
+      description: links.commit.description,
+      run: (vscode) => openOnGitHub(vscode, links.commit),
     },
   ];
 }
@@ -409,8 +552,9 @@ function activate(context) {
       if (!state) {
         return;
       }
+      const links = await readGitHubLinks(state);
       // Resolves to the picked entry object itself, so its `run` comes along.
-      const picked = await vscode.window.showQuickPick(menuEntries(state));
+      const picked = await vscode.window.showQuickPick(menuEntries(state, links));
       if (picked) {
         await picked.run(vscode, state);
       }
@@ -453,4 +597,14 @@ function activate(context) {
   refresh();
 }
 
-module.exports = { activate, readGitState, formatState, readSettings, warningColour, branchAtCommit, menuEntries };
+module.exports = {
+  activate,
+  readGitState,
+  formatState,
+  readSettings,
+  warningColour,
+  branchAtCommit,
+  menuEntries,
+  githubRepo,
+  readGitHubLinks,
+};

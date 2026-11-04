@@ -13,7 +13,16 @@ const Module = require('module');
 const os = require('os');
 const path = require('path');
 
-const { readGitState, formatState, readSettings, warningColour, branchAtCommit, menuEntries } = require('./extension');
+const {
+  readGitState,
+  formatState,
+  readSettings,
+  warningColour,
+  branchAtCommit,
+  menuEntries,
+  githubRepo,
+  readGitHubLinks,
+} = require('./extension');
 
 function git(cwd, ...args) {
   execFileSync('git', ['-C', cwd, ...args], { stdio: 'pipe' });
@@ -59,6 +68,18 @@ function makeRepoWithUpstream() {
 
 function emptyCommit(cwd, message) {
   git(cwd, 'commit', '-q', '--allow-empty', '-m', message);
+}
+
+// Stands in for `git push -u origin <branch>` without a network: the remote
+// URL points at GitHub and the remote-tracking ref is written directly.
+function pushToFakeGitHub(repo, branch, remoteBranch = branch) {
+  git(repo, 'remote', 'add', 'origin', 'git@github.com:octo/blink.git');
+  git(repo, 'update-ref', `refs/remotes/origin/${remoteBranch}`, 'HEAD');
+  git(repo, 'branch', '-q', '-u', `origin/${remoteBranch}`, branch);
+}
+
+function fullCommit(repo) {
+  return execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD']).toString().trim();
 }
 
 const tests = [];
@@ -266,6 +287,7 @@ async function activateFake(folder) {
     warnings: [],
     menus: [],
     clipboard: [],
+    opened: [],
     pollDelays: [],
     pickLabel: undefined,
   };
@@ -314,7 +336,12 @@ async function activateFake(folder) {
     },
     env: {
       clipboard: { writeText: async (text) => fake.clipboard.push(text) },
+      openExternal: async (uri) => {
+        fake.opened.push(uri.toString());
+        return true;
+      },
     },
+    Uri: { parse: (text) => ({ toString: () => text }) },
     commands: {
       registerCommand: (id, handler) => {
         fake.registered.set(id, handler);
@@ -371,17 +398,148 @@ test('branch @ commit text for clean, dirty and detached states', () => {
   assert.strictEqual(branchAtCommit({ ...state, branch: null }), 'detached @ af3346a');
 });
 
-test('menu entries preview the copy text, or say there is no git', () => {
+test('menu entries preview the copy text and links, or say there is no git', async () => {
   const ok = { ok: true, branch: 'test', commit: 'af3346a', changedFiles: 1 };
+  const links = {
+    branch: { url: 'https://github.com/o/r/tree/test', description: 'o/r: test' },
+    commit: { description: 'not pushed', reason: 'Commit af3346a is not on origin.' },
+  };
   assert.deepStrictEqual(
-    menuEntries(ok).map((e) => [e.label, e.description]),
+    menuEntries(ok, links).map((e) => [e.label, e.description]),
     [
       ['Show details', undefined],
       ['Copy branch @ commit', 'test @ af3346a (dirty)'],
+      ['Open branch on GitHub', 'o/r: test'],
+      ['Open commit on GitHub', 'not pushed'],
     ]
   );
   const noGit = { ok: false, folder: '/x', reason: 'No sketch folder is open.' };
-  assert.strictEqual(menuEntries(noGit)[1].description, 'no git');
+  const noGitLinks = await readGitHubLinks(noGit);
+  assert.deepStrictEqual(
+    menuEntries(noGit, noGitLinks).slice(1).map((e) => e.description),
+    ['no git', 'no git', 'no git']
+  );
+  assert.strictEqual(noGitLinks.commit.reason, 'No sketch folder is open.');
+});
+
+test('GitHub owner/repo from each remote URL form; other hosts give null', () => {
+  for (const url of [
+    'https://github.com/octo/blink',
+    'https://github.com/octo/blink.git',
+    'https://github.com/octo/blink/',
+    'https://user@github.com/octo/blink.git',
+    'http://github.com/octo/blink.git',
+    'git@github.com:octo/blink',
+    'git@github.com:octo/blink.git',
+    'ssh://git@github.com/octo/blink',
+    'ssh://git@github.com/octo/blink.git',
+    'ssh://git@github.com:22/octo/blink.git',
+    'git://github.com/octo/blink.git',
+    'https://GitHub.com/octo/blink.git\n',
+  ]) {
+    assert.strictEqual(githubRepo(url), 'octo/blink', url);
+  }
+  assert.strictEqual(githubRepo('git@github.com:octo/my.repo.git'), 'octo/my.repo');
+  for (const url of [
+    'https://gitlab.com/octo/blink.git',
+    'git@gitlab.com:octo/blink.git',
+    'https://github.com.evil.example/octo/blink',
+    'https://example.com/github.com/octo/blink',
+    'https://github.com/octo',
+    'https://github.com/octo/blink/tree/main',
+    'C:/repos/blink.git',
+    '../blink.git',
+  ]) {
+    assert.strictEqual(githubRepo(url), null, url);
+  }
+});
+
+test('GitHub links say why they cannot open', async () => {
+  const repo = makeRepo();
+  let links = await readGitHubLinks(await readGitState(repo));
+  assert.deepStrictEqual(links.branch, {
+    description: 'no remote',
+    reason: 'The repository has no remote named origin.',
+  });
+  assert.deepStrictEqual(links.commit, links.branch);
+
+  git(repo, 'remote', 'add', 'origin', 'https://gitlab.com/octo/blink.git');
+  links = await readGitHubLinks(await readGitState(repo));
+  assert.strictEqual(links.branch.description, 'not on GitHub');
+  assert.strictEqual(links.commit.reason, 'Remote origin does not point at github.com.');
+
+  git(repo, 'remote', 'set-url', 'origin', 'git@github.com:octo/blink.git');
+  links = await readGitHubLinks(await readGitState(repo));
+  assert.strictEqual(links.branch.description, 'not pushed');
+  assert.match(links.branch.reason, /git push -u origin feat\/1-example/);
+  assert.strictEqual(links.commit.description, 'not pushed');
+
+  // Pushed under another name: the link follows the upstream, not the local name.
+  git(repo, 'update-ref', 'refs/remotes/origin/renamed', 'HEAD');
+  git(repo, 'branch', '-q', '-u', 'origin/renamed');
+  links = await readGitHubLinks(await readGitState(repo));
+  assert.strictEqual(links.branch.url, 'https://github.com/octo/blink/tree/renamed');
+
+  git(repo, 'update-ref', '-d', 'refs/remotes/origin/renamed');
+  links = await readGitHubLinks(await readGitState(repo));
+  assert.strictEqual(links.branch.description, 'upstream gone');
+
+  git(repo, 'checkout', '-q', '--detach');
+  git(repo, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  links = await readGitHubLinks(await readGitState(repo));
+  assert.strictEqual(links.branch.description, 'detached HEAD');
+  assert.strictEqual(links.commit.url, `https://github.com/octo/blink/commit/${fullCommit(repo)}`);
+});
+
+test('Open branch / commit on GitHub open the pushed branch and commit', async () => {
+  const repo = makeRepo();
+  pushToFakeGitHub(repo, 'feat/1-example');
+  const fake = await activateFake(path.join(repo, 'sketch'));
+  try {
+    const pushed = fullCommit(repo);
+    await fake.click('Open branch on GitHub');
+    await fake.click('Open commit on GitHub');
+    assert.deepStrictEqual(fake.opened, [
+      'https://github.com/octo/blink/tree/feat/1-example',
+      `https://github.com/octo/blink/commit/${pushed}`,
+    ]);
+    assert.deepStrictEqual(
+      fake.menus[0].slice(2).map((e) => e.description),
+      ['octo/blink: feat/1-example', `octo/blink: ${pushed.slice(0, 7)}`]
+    );
+
+    git(repo, 'commit', '-q', '--allow-empty', '-m', 'local only');
+    await fake.click('Open commit on GitHub');
+    await fake.click('Open branch on GitHub');
+    assert.strictEqual(fake.opened.length, 3, 'the unpushed commit was opened');
+    assert.strictEqual(fake.opened[2], 'https://github.com/octo/blink/tree/feat/1-example');
+    assert.strictEqual(fake.warnings.length, 1);
+    assert.match(
+      fake.warnings[0],
+      /^Cannot open on GitHub: Commit [0-9a-f]+ is not on origin as of the last fetch or push; push it first\.$/
+    );
+  } finally {
+    fake.dispose();
+  }
+});
+
+test('Open on GitHub without a remote warns with the reason', async () => {
+  const fake = await activateFake(makeRepo());
+  try {
+    await fake.click('Open branch on GitHub');
+    await fake.click('Open commit on GitHub');
+    assert.deepStrictEqual(fake.opened, []);
+    assert.deepStrictEqual(
+      fake.menus[0].slice(2).map((e) => e.description),
+      ['no remote', 'no remote']
+    );
+    assert.deepStrictEqual(fake.warnings, [
+      'Cannot open on GitHub: The repository has no remote named origin.',
+      'Cannot open on GitHub: The repository has no remote named origin.',
+    ]);
+  } finally {
+    fake.dispose();
+  }
 });
 
 test('activate shows the item; clicking it opens the menu; Show details', async () => {

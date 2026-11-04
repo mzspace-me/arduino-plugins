@@ -46,6 +46,17 @@ Click for a menu:
 
 - **Show details**: the same details in a dialog.
 - **Copy branch @ commit**: copies the exact build source for notes and bench issues, for example `dev @ af3346a`, or `dev @ af3346a (dirty)` when tracked files have uncommitted changes. On a detached HEAD it copies `detached @ af3346a`; with `no git` it copies nothing and shows the reason.
+- **Open branch on GitHub** / **Open commit on GitHub**: opens the branch (`/tree/<branch>`) or the commit (`/commit/<hash>`) in the browser. The repository comes from the branch's upstream remote, or `origin` when there is none; `https://github.com/o/r`, `git@github.com:o/r` and `ssh://git@github.com/o/r` remotes all work, with or without `.git`. The menu shows `owner/repo: <branch or commit>` next to each entry, or why it cannot open:
+
+  | Shown in the menu | Why |
+  |---|---|
+  | `no remote` | The repository has no `origin` remote |
+  | `not on GitHub` | The remote points somewhere other than github.com |
+  | `detached HEAD` | (branch only) HEAD is on a commit, not a branch |
+  | `not pushed` | The branch has no upstream yet, or the commit is on no branch of the remote as of the last fetch or push, so GitHub would show a 404 |
+  | `upstream gone` | (branch only) The upstream branch was deleted from the remote |
+
+  Picking an entry that cannot open shows the full reason instead. A private repository only loads when the browser is signed in to GitHub.
 
 The item refreshes every 5 s (see [Settings](#settings)) while the IDE has focus, on save, when the IDE window regains focus, and when another editor tab becomes active, so a branch switch made in a terminal appears within a few seconds.
 
@@ -107,7 +118,7 @@ Requires git on the PATH the IDE starts with. Tested with Arduino IDE 2.3.4.
 
 `extension.js` is the whole extension. Bump `version` in `package.json` with each change, then rebuild and reinstall with `-Install`, which also clears the IDE's unpacked copy of the previous build.
 
-`node git-branch-indicator\test_extension.js` checks the git reading, the status-bar text and colours, activation, the click menu, settings and the extension id without the IDE (needs Node.js). `node git-branch-indicator\test_release.js` checks `release.ps1` against throwaway repositories and a stand-in `gh`, so it never touches GitHub.
+`node git-branch-indicator\test_extension.js` checks the git reading, the status-bar text and colours, activation, the click menu and its GitHub links, settings and the extension id without the IDE (needs Node.js). `node git-branch-indicator\test_release.js` checks `release.ps1` against throwaway repositories and a stand-in `gh`, so it never touches GitHub.
 
 ## Release
 
