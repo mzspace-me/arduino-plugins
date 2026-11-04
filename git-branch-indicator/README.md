@@ -25,14 +25,14 @@ From the `Arduino Plugins` folder, in PowerShell or `cmd`:
 powershell -ExecutionPolicy Bypass -File git-branch-indicator\build_vsix.ps1 -Install
 ```
 
-This builds `arduino-git-branch-indicator-<version>.vsix` into `git-branch-indicator\dist\` and copies it into `%USERPROFILE%\.arduinoIDE\plugins\`, replacing any older version. Restart Arduino IDE to load it. Without `-Install` it only builds.
+This builds `arduino-git-branch-indicator-<version>.vsix` into `git-branch-indicator\dist\`, copies it into `%USERPROFILE%\.arduinoIDE\plugins\` replacing any older version, and clears the IDE's unpacked copies so the new build is the one loaded. Restart Arduino IDE to load it. Without `-Install` it only builds.
 
-To remove it, delete `arduino-git-branch-indicator-*.vsix` from `%USERPROFILE%\.arduinoIDE\plugins\` and restart the IDE.
+To remove it, delete `arduino-git-branch-indicator-*.vsix` from `%USERPROFILE%\.arduinoIDE\plugins\` **and** the `arduino-git-branch-indicator-*` folders from `%USERPROFILE%\.arduinoIDE\deployedPlugins\`, then restart the IDE. The IDE runs plugins from those unpacked folders and keeps loading one whose `.vsix` is gone.
 
 Requires git on the PATH the IDE starts with. Tested with Arduino IDE 2.3.4.
 
 ## Change it
 
-`extension.js` is the whole extension. Bump `version` in `package.json` with each change: the IDE caches an unpacked copy by file name and would otherwise keep running the old one. Then rebuild and reinstall.
+`extension.js` is the whole extension. Bump `version` in `package.json` with each change, then rebuild and reinstall with `-Install`, which also clears the IDE's unpacked copy of the previous build.
 
 `node git-branch-indicator\test_extension.js` checks the git reading, the status-bar text and activation without the IDE (needs Node.js).

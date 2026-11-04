@@ -84,6 +84,13 @@ if ($Install) {
     New-Item -ItemType Directory -Force -Path $pluginsDir | Out-Null
     # An older version left beside the new one would load as a second copy.
     Get-ChildItem -Path $pluginsDir -Filter "$name-*.vsix" | Remove-Item -Force
+    # The IDE loads plugins from its unpacked copies in deployedPlugins, not
+    # from the .vsix, and keeps loading a copy whose .vsix is gone. Clearing
+    # them makes it unpack this build fresh at the next start.
+    $deployedDir = Join-Path $env:USERPROFILE '.arduinoIDE\deployedPlugins'
+    if (Test-Path $deployedDir) {
+        Get-ChildItem -Path $deployedDir -Directory -Filter "$name-*" | Remove-Item -Recurse -Force
+    }
     Copy-Item -Path $vsixPath -Destination $pluginsDir
     Write-Output "Installed into $pluginsDir. Restart Arduino IDE to load it."
 }
