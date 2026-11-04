@@ -2,7 +2,7 @@
   "name": "arduino-git-branch-indicator",
   "displayName": "Git Branch Indicator",
   "description": "Shows the checked-out git branch and commit of the open sketch in the Arduino IDE 2 status bar.",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "publisher": "mzspace",
   "author": {
     "name": "Mz",
